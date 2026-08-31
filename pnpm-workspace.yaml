@@ -1,10 +1,14 @@
 packages:
   - ./
+allowBuilds:
+  core-js: set this to true or false
 catalog:
-  '@babel/core': ^8.0.1
-  '@babel/types': ^8.0.4
-  '@praha/byethrow': ^0.12.0
-  '@praha/byethrow-oxlint': ^0.12.0
-  '@vitest/coverage-v8': 4.1.11
+  "@babel/core": ^8.0.1
+  "@babel/generator": ^8.0.0
+  "@babel/types": ^8.0.4
+  "@praha/byethrow": ^0.12.0
+  "@praha/byethrow-oxlint": ^0.12.0
+  "@vitest/coverage-v8": 4.1.11
+  babel-plugin-tester: ^12.0.0
   vite-plus: ^0.3.0
 catalogMode: strict

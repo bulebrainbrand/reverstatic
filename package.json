@@ -1,20 +1,22 @@
 {
   "type": "module",
+  "dependencies": {
+    "@babel/core": "catalog:",
+    "@babel/generator": "catalog:",
+    "@babel/types": "catalog:",
+    "@praha/byethrow": "catalog:"
+  },
+  "devDependencies": {
+    "@praha/byethrow-oxlint": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "babel-plugin-tester": "catalog:",
+    "vite-plus": "catalog:"
+  },
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
       "version": "11.24.0",
       "onFail": "download"
     }
-  },
-  "devDependencies": {
-    "@praha/byethrow-oxlint": "catalog:",
-    "@vitest/coverage-v8": "catalog:",
-    "vite-plus": "catalog:"
-  },
-  "dependencies": {
-    "@babel/core": "catalog:",
-    "@babel/types": "catalog:",
-    "@praha/byethrow": "catalog:"
   }
 }

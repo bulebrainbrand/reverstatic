@@ -1,0 +1,3 @@
+- TypeCheck and Lint: `vpr check`
+- Format: `vpr fmt`
+- Run test: `vpr test`

@@ -20,6 +20,7 @@ export default defineConfig({
     objectWrap: "collapse",
   },
   test: {
+    globals: true,
     include: ["src/**/*.test.ts", "__tests__/**/*.test.ts"],
     coverage: { enabled: true, provider: "v8", reporter: "text" },
   },
