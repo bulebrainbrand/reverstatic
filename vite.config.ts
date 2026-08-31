@@ -8,7 +8,9 @@ export default defineConfig({
       "typescript/await-thenable": "error",
       "typescript/no-array-delete": "error",
       "typescript/no-unsafe-type-assertion": "error",
+      "unicorn/no-empty-file": "off",
     },
+    ignorePatterns: ["./target/**/*"],
   },
   fmt: {
     endOfLine: "lf",
