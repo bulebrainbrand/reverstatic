@@ -17,7 +17,7 @@ export default defineConfig({
     singleQuote: false,
     quoteProps: "as-needed",
     printWidth: 80,
-    insertFinalNewline: false,
+    insertFinalNewline: true,
     sortPackageJson: true,
     objectWrap: "collapse",
   },
