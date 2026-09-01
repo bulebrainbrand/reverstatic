@@ -15,17 +15,45 @@ function getVariablesInBody(path: NodePath): Set<string> {
   return vars;
 }
 
+function usesAnyVariable(
+  expression: t.Expression,
+  bodyVariables: Set<string>,
+): boolean {
+  let found = false;
+
+  const walk = (node: any) => {
+    if (found) return;
+
+    if (t.isIdentifier(node)) {
+      if (bodyVariables.has(node.name)) {
+        found = true;
+      }
+      return;
+    }
+
+    if (t.isNode(node)) {
+      for (const key in node) {
+        if (key.startsWith("_") || key === "loc" || key === "extra") continue;
+        const value = (node as any)[key];
+        if (Array.isArray(value)) {
+          value.forEach(walk);
+        } else if (t.isNode(value)) {
+          walk(value);
+        }
+      }
+    }
+  };
+
+  walk(expression);
+  return found;
+}
+
 function canExtractExpression(
   expression: t.Expression,
   bodyVariables: Set<string>,
 ): boolean {
-  if (!t.isAssignmentExpression(expression)) {
-    return true;
-  }
-
-  return !(
-    t.isIdentifier(expression.left) && bodyVariables.has(expression.left.name)
-  );
+  // Cannot extract if it uses any body variables
+  return !usesAnyVariable(expression, bodyVariables);
 }
 
 export default function (): PluginObject<PluginPass> {

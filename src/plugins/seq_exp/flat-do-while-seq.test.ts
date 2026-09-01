@@ -53,7 +53,7 @@ do {
 do {
   const a = 1;
   console.log(a);
-} while ((foo(a), (c = d));`,
+} while ((foo(a), (c = d)));`,
     },
     {
       code: `do{const a = 1;console.log(a)}while(new foo(a), c = d)`,
@@ -61,7 +61,7 @@ do {
 do {
   const a = 1;
   console.log(a);
-} while ((new foo(a), (c = d));`,
+} while ((new foo(a), (c = d)));`,
     },
     {
       code: `do{const a = 1;console.log(a)}while((f.g = a, c = d))`,
@@ -69,7 +69,7 @@ do {
 do {
   const a = 1;
   console.log(a);
-} while ((f.g = a, (c = d));`,
+} while (((f.g = a), (c = d)));`,
     },
   ],
 });
