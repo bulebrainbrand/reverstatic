@@ -118,6 +118,62 @@ for (let i = 0; i < 10; a = b, i++) {
     },
     {
       code: `\
+for (let i = 0; i < 10; a, i++) {
+  let a = i + 1;
+  b += i;
+  d += a;
+}`,
+      output: `\
+for (let i = 0; i < 10; a, i++) {
+  let a = i + 1;
+  b += i;
+  d += a;
+}`,
+    },
+    {
+      code: `\
+for (let i = 0; i < 10; a.b, i++) {
+  let a = i + 1;
+  b += i;
+  d += a;
+}`,
+      output: `\
+for (let i = 0; i < 10; a.b, i++) {
+  let a = i + 1;
+  b += i;
+  d += a;
+}`,
+    },
+    {
+      code: `\
+for (let i = 0; i < 10; foo(a), i++) {
+  let a = i + 1;
+  b += i;
+  d += a;
+}`,
+      output: `\
+for (let i = 0; i < 10; foo(a), i++) {
+  let a = i + 1;
+  b += i;
+  d += a;
+}`,
+    },
+    {
+      code: `\
+for (let i = 0; i < 10; f.g = a, i++) {
+  let a = i + 1;
+  b += i;
+  d += a;
+}`,
+      output: `\
+for (let i = 0; i < 10; f.g = a, i++) {
+  let a = i + 1;
+  b += i;
+  d += a;
+}`,
+    },
+    {
+      code: `\
 for (let i = 0; i < 10; (i++,foo())) {
   b += i;
   d += i + 1;
