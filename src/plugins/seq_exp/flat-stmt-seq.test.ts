@@ -1,8 +1,8 @@
 import { pluginTester } from "babel-plugin-tester";
-import flatSeqContent from "./flat-stmt-seq-content";
+import flatStmtSeq from "./flat-stmt-seq";
 pluginTester({
-  plugin: flatSeqContent,
-  pluginName: "flat-seq-content",
+  plugin: flatStmtSeq,
+  pluginName: "flat-stmt-seq",
   tests: [
     { code: `console.log("foo");`, output: `console.log("foo");` },
     {
