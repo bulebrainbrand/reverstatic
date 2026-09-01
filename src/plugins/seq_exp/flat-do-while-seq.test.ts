@@ -39,5 +39,21 @@ do {
   console.log(a);
 } while ((foo(a), (c = d));`,
     },
+    {
+      code: `do{const a = 1;console.log(a)}while(new foo(a), c = d)`,
+      output: `\
+do {
+  const a = 1;
+  console.log(a);
+} while ((new foo(a), (c = d));`,
+    },
+    {
+      code: `do{const a = 1;console.log(a)}while((f.g = a, c = d))`,
+      output: `\
+do {
+  const a = 1;
+  console.log(a);
+} while ((f.g = a, (c = d));`,
+    },
   ],
 });
