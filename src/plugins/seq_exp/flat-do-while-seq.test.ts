@@ -23,6 +23,22 @@ do {
 } while (((a = b), (c = d)));`,
     },
     {
+      code: `do{const a = 1;console.log(a)}while(a,c = d)`,
+      output: `\
+do {
+  const a = 1;
+  console.log(a);
+} while ((a, (c = d)));`,
+    },
+    {
+      code: `do{const a = 1;console.log(a)}while(a.f,c = d)`,
+      output: `\
+do {
+  const a = 1;
+  console.log(a);
+} while ((a.f, (c = d)));`,
+    },
+    {
       code: `do{const a = 1;console.log(a)}while((a = b,foo(),c = d))`,
       output: `\
 do {
