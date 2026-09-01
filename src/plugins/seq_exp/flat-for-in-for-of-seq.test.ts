@@ -37,10 +37,7 @@ for (const a in (d = b)) {
   console.log(a);
 }`,
     },
-    {
-      code: `const x = (foo(), bar);`,
-      output: `const x = (foo(), bar);`,
-    },
+    { code: `const x = (foo(), bar);`, output: `const x = (foo(), bar);` },
     {
       code: `for(const a of (b = 1,c = 2,d = 3,e)){console.log(a)}`,
       output: `b = 1;
