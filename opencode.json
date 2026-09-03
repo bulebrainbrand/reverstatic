@@ -8,6 +8,8 @@
        "rm *":"deny",
        "code *":"deny",
        "grep *":"allow",
+       "find *":"allow",
+       "ls *":"allow"
     },
     "edit":{
         "*":"deny",
