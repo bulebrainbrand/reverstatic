@@ -1,111 +1,156 @@
-import { type PluginObject, PluginPass } from "@babel/core";
+import { type NodePath, type PluginObject, PluginPass } from "@babel/core";
 import * as t from "@babel/types";
+import { partitionPrefix } from "../../utils/canHoistSeqPrefix";
 
-function getVariablesInBody(path: any): Set<string> {
-  const vars = new Set<string>();
-  path.traverse({
-    VariableDeclarator(innerPath: any) {
-      if (innerPath.node.id.type === "Identifier") {
-        vars.add(innerPath.node.id.name);
-      }
-    },
-  });
-  return vars;
-}
+const expressionOf = (path: NodePath): t.Expression | undefined => {
+  const node = path.node;
+  if (t.isExpression(node)) return node;
+  return undefined;
+};
 
-function canExtractExpression(expr: any, bodyVars: Set<string>): boolean {
-  // Check if the expression assigns to any variable that's declared in the body
-  if (t.isAssignmentExpression(expr)) {
-    const left = expr.left;
-    if (t.isIdentifier(left) && bodyVars.has(left.name)) {
-      return false;
-    }
+const toPrefixStatements = (
+  paths: NodePath[],
+): t.ExpressionStatement[] | undefined => {
+  const statements: t.ExpressionStatement[] = [];
+  for (const path of paths) {
+    const expression = expressionOf(path);
+    if (!expression) return undefined;
+    statements.push(t.expressionStatement(expression));
   }
+  return statements;
+};
 
-  return true;
-}
+const toClonedSuffixStatements = (
+  paths: NodePath[],
+): t.ExpressionStatement[] | undefined => {
+  const statements: t.ExpressionStatement[] = [];
+  for (const path of paths) {
+    const expression = expressionOf(path);
+    if (!expression) return undefined;
+    statements.push(t.expressionStatement(t.cloneNode(expression)));
+  }
+  return statements;
+};
+
+const sequenceParts = (
+  // Babelの.get()オーバーロードはgenerics付きパスと相性が悪いため、
+  // 動的キーでの取り出し境界はanyにする (既存コードと同様の作法)。
+  holder: any,
+  key: string,
+):
+  | { prefixPaths: NodePath[]; lastPath: NodePath; lastNode: t.Expression }
+  | undefined => {
+  const target: any = holder.get(key);
+  if (Array.isArray(target)) return undefined;
+  if (!t.isSequenceExpression(target.node)) return undefined;
+  if (target.node.expressions.length < 2) return undefined;
+  const expressionsKey: string = "expressions";
+  const expressionPaths: any = target.get(expressionsKey);
+  if (!Array.isArray(expressionPaths)) return undefined;
+  const lastPath = expressionPaths[expressionPaths.length - 1];
+  const lastNode = expressionOf(lastPath);
+  if (!lastNode) return undefined;
+  return {
+    prefixPaths: expressionPaths.slice(0, -1),
+    lastPath,
+    lastNode,
+  };
+};
+
+const remainingExpression = (
+  remaining: NodePath[],
+  lastNode: t.Expression,
+): t.Expression | undefined => {
+  const remainingNodes: t.Expression[] = [];
+  for (const path of remaining) {
+    const expression = expressionOf(path);
+    if (!expression) return undefined;
+    remainingNodes.push(expression);
+  }
+  if (remainingNodes.length === 0) return lastNode;
+  return t.sequenceExpression([...remainingNodes, lastNode]);
+};
+
+const prependToBody = (
+  node: t.ForStatement,
+  statements: t.ExpressionStatement[],
+): void => {
+  if (t.isBlockStatement(node.body)) {
+    node.body.body.unshift(...statements);
+  } else {
+    node.body = t.blockStatement([...statements, node.body]);
+  }
+};
+
+const appendToBody = (
+  node: t.ForStatement,
+  statements: t.ExpressionStatement[],
+): void => {
+  if (t.isBlockStatement(node.body)) {
+    node.body.body.push(...statements);
+  } else {
+    node.body = t.blockStatement([node.body, ...statements]);
+  }
+};
 
 export default function (): PluginObject<PluginPass> {
   return {
     visitor: {
-      ForStatement(path, state) {
+      ForStatement(path) {
         const { node } = path;
-        const bodyVars = getVariablesInBody(path.get("body"));
 
-        // Handle condition with sequence expression
-        if (
-          t.isSequenceExpression(node.test) &&
-          node.test.expressions.length > 0
-        ) {
-          const expressions = node.test.expressions;
-          const lastExpr = expressions[expressions.length - 1];
-          const prefixExprs = expressions.slice(0, -1);
-
-          const extractableExprs = prefixExprs.filter((expr) =>
-            canExtractExpression(expr, bodyVars),
-          );
-          const remainingExprs = prefixExprs.filter(
-            (expr) => !canExtractExpression(expr, bodyVars),
-          );
-
-          if (extractableExprs.length > 0) {
-            // Keep expressions that cannot be moved in the condition.
-            node.test =
-              remainingExprs.length > 0
-                ? t.sequenceExpression([...remainingExprs, lastExpr])
-                : lastExpr;
-
-            // Add movable expressions to the beginning of the body
-            const prefixStmts = extractableExprs.map((expr) =>
-              t.expressionStatement(expr),
+        // Handle condition with sequence expression.
+        // body先頭+suffixへの移動は初回判定の順序が変わるため、
+        // lastに影響する更新はpartition側で残留させる。
+        const testParts = sequenceParts(path, "test");
+        if (testParts) {
+          const bodyPath = path.get("body");
+          if (!Array.isArray(bodyPath)) {
+            const { hoistable, remaining } = partitionPrefix(
+              testParts.prefixPaths,
+              bodyPath,
+              testParts.lastPath,
             );
 
-            if (t.isBlockStatement(node.body)) {
-              node.body.body.unshift(...prefixStmts);
-            } else {
-              node.body = t.blockStatement([...prefixStmts, node.body as any]);
+            if (hoistable.length > 0) {
+              // Keep expressions that cannot be moved in the condition.
+              const nextTest = remainingExpression(
+                remaining,
+                testParts.lastNode,
+              );
+              const prefixStmts = toPrefixStatements(hoistable);
+              const suffixStmts = toClonedSuffixStatements(hoistable);
+              if (nextTest && prefixStmts && suffixStmts) {
+                node.test = nextTest;
+                prependToBody(node, prefixStmts);
+                path.insertAfter(suffixStmts);
+              }
             }
-
-            // Add the same expressions after the loop
-            const suffixStmts = extractableExprs.map((expr) =>
-              t.expressionStatement(t.cloneNode(expr)),
-            );
-            path.insertAfter(suffixStmts);
           }
         }
 
-        // Handle update with sequence expression
-        if (
-          t.isSequenceExpression(node.update) &&
-          node.update.expressions.length > 0
-        ) {
-          const expressions = node.update.expressions;
-          const lastExpr = expressions[expressions.length - 1];
-          const prefixExprs = expressions.slice(0, -1);
-
-          const extractableExprs = prefixExprs.filter((expr) =>
-            canExtractExpression(expr, bodyVars),
-          );
-          const remainingExprs = prefixExprs.filter(
-            (expr) => !canExtractExpression(expr, bodyVars),
-          );
-
-          if (extractableExprs.length > 0) {
-            // Keep expressions that cannot be moved in the update clause.
-            node.update =
-              remainingExprs.length > 0
-                ? t.sequenceExpression([...remainingExprs, lastExpr])
-                : lastExpr;
-
-            // Add movable expressions to the end of the body
-            const suffixStmts = extractableExprs.map((expr) =>
-              t.expressionStatement(expr),
+        // Handle update with sequence expression.
+        // body末尾への移動は順序保存のためcapture判定のみでよい。
+        const updateParts = sequenceParts(path, "update");
+        if (updateParts) {
+          const bodyPath = path.get("body");
+          if (!Array.isArray(bodyPath)) {
+            const { hoistable, remaining } = partitionPrefix(
+              updateParts.prefixPaths,
+              bodyPath,
             );
 
-            if (t.isBlockStatement(node.body)) {
-              node.body.body.push(...suffixStmts);
-            } else {
-              node.body = t.blockStatement([node.body as any, ...suffixStmts]);
+            if (hoistable.length > 0) {
+              // Keep expressions that cannot be moved in the update clause.
+              const nextUpdate = remainingExpression(
+                remaining,
+                updateParts.lastNode,
+              );
+              const suffixStmts = toPrefixStatements(hoistable);
+              if (nextUpdate && suffixStmts) {
+                node.update = nextUpdate;
+                appendToBody(node, suffixStmts);
+              }
             }
           }
         }
