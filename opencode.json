@@ -1,0 +1,20 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "*": "ask",
+    "read":"allow",
+    "bash":{
+       "*":"ask",
+       "rm *":"deny",
+       "code *":"deny",
+       "grep *":"allow",
+    },
+    "edit":{
+        "*":"deny",
+        "src/**/*":"allow",
+        "package.json":"ask",
+        "vite.config.json":"ask",
+        "pnpm-workspace.yaml":"ask"
+    }
+  }
+}
