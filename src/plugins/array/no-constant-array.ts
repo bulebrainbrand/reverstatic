@@ -2,6 +2,15 @@ import { type NodePath, type PluginObject, type PluginPass } from "@babel/core";
 import * as t from "@babel/types";
 import { isNoSideEffect } from "../../utils/isNoSideEffect";
 
+const isStaticIndex = (
+  property: t.Node,
+  length: number,
+): property is t.NumericLiteral => {
+  if (!t.isNumericLiteral(property)) return false;
+  if (!Number.isInteger(property.value)) return false;
+  return property.value >= 0 && property.value < length;
+};
+
 export default function (): PluginObject<PluginPass> {
   return {
     visitor: {
@@ -62,16 +71,6 @@ export default function (): PluginObject<PluginPass> {
           if (parentPath.node.object !== referencePath.node) return;
           if (parentPath.node.computed !== true) return;
 
-          const propertyNode = parentPath.node.property;
-          if (!t.isNumericLiteral(propertyNode)) return;
-          if (!Number.isInteger(propertyNode.value)) return;
-          const index = propertyNode.value;
-          if (index < 0 || index >= elementPaths.length) return;
-
-          const elementNode = elementPaths[index].node;
-          if (elementNode == null) return;
-          if (t.isSpreadElement(elementNode)) return;
-
           const grandParentPath = parentPath.parentPath;
           if (
             grandParentPath?.isAssignmentExpression() &&
@@ -98,6 +97,14 @@ export default function (): PluginObject<PluginPass> {
           ) {
             return;
           }
+
+          const propertyNode = parentPath.node.property;
+          if (!isStaticIndex(propertyNode, elementPaths.length)) continue;
+          const index = propertyNode.value;
+
+          const elementNode = elementPaths[index].node;
+          if (elementNode == null) return;
+          if (t.isSpreadElement(elementNode)) return;
 
           targets.push({
             memberPath: parentPath as NodePath<t.MemberExpression>,

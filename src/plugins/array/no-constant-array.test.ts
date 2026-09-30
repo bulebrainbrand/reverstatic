@@ -1,9 +1,9 @@
 import { pluginTester } from "babel-plugin-tester";
-import noConstantArray from "./no-constatnt-array";
+import noConstantArray from "./no-constant-array";
 
 pluginTester({
   plugin: noConstantArray,
-  pluginName: "no-constatnt-array",
+  pluginName: "no-constant-array",
   tests: [
     { code: `console.log("foo");`, output: `console.log("foo");` },
     {
@@ -85,6 +85,28 @@ pluginTester({
     {
       code: `const a = [10, 20];\nconsole.log(a[5]);`,
       output: `const a = [10, 20];\nconsole.log(a[5]);`,
+    },
+    // 動的参照が混在しても静的参照だけ置換する
+    {
+      code: `const a = [10, 20];\nconst i = 0;\nconsole.log(a[i], a[0]);`,
+      output: `const a = [10, 20];\nconst i = 0;\nconsole.log(a[i], 10);`,
+    },
+    {
+      code: `const a = [10, 20];\nconsole.log(a["0"], a[1]);`,
+      output: `const a = [10, 20];\nconsole.log(a["0"], 20);`,
+    },
+    {
+      code: `const a = [10, 20];\nconsole.log(a[5], a[0]);`,
+      output: `const a = [10, 20];\nconsole.log(a[5], 10);`,
+    },
+    // 動的書き込みがある場合は全体を置換しない
+    {
+      code: `const a = [10, 20];\nconst i = 0;\na[i] = 99;\nconsole.log(a[0]);`,
+      output: `const a = [10, 20];\nconst i = 0;\na[i] = 99;\nconsole.log(a[0]);`,
+    },
+    {
+      code: `const a = [10, 20];\nconst i = 0;\na[i]++;\nconsole.log(a[0]);`,
+      output: `const a = [10, 20];\nconst i = 0;\na[i]++;\nconsole.log(a[0]);`,
     },
   ],
 });
