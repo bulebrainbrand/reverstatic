@@ -8,6 +8,7 @@
   },
   "devDependencies": {
     "@praha/byethrow-oxlint": "catalog:",
+    "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "babel-plugin-tester": "catalog:",
     "vite-plus": "catalog:"

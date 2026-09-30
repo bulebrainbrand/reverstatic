@@ -15,13 +15,15 @@
       "head *": "allow",
       "git log *": "allow",
       "echo *": "allow",
-      "git status *": "allow"
+      "git status *": "allow",
+      "file *": "allow"
     },
     "edit": {
       "*": "deny",
       "src/**/*": "allow",
       "package.json": "ask",
-      "vite.config.json": "ask",
+      ".gitignore": "ask",
+      "vite.config.ts": "ask",
       "pnpm-workspace.yaml": "ask"
     },
     "glob": "allow",
