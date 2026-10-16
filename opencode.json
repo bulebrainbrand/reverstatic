@@ -16,6 +16,7 @@
       "git log *": "allow",
       "echo *": "allow",
       "git status *": "allow",
+      "git diff *": "allow",
       "file *": "allow"
     },
     "edit": {
