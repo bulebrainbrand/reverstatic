@@ -6,12 +6,7 @@ const unchanged = (
   title: string,
   code: string,
   babelOptions?: { sourceType: "script" },
-) => ({
-  title,
-  code,
-  output: code,
-  ...(babelOptions ? { babelOptions } : {}),
-});
+) => ({ title, code, output: code, ...(babelOptions ? { babelOptions } : {}) });
 
 pluginTester({
   plugin: noRestParameterAsVariable,
@@ -164,6 +159,57 @@ pluginTester({
   r["length"] = 1;
   a = 2;
   return a + r.length;
+}`,
+    },
+    {
+      title:
+        "先頭の r.length = N は切詰め済みとして数値キーも変換 (N 以上は初期値なし)",
+      code: `function f(...r) {
+  r["length"] = 1;
+  r[246] = 1;
+  return r[246];
+}`,
+      output: `function f(...r) {
+  let _246;
+  r["length"] = 1;
+  _246 = 1;
+  return _246;
+}`,
+    },
+    {
+      title: "N 未満の数値キーは実引数を取り込む",
+      code: `function f(...r) {
+  r.length = 3;
+  r[1] = r[1] + 1;
+  r[5] = 2;
+  return r[1] + r[5];
+}`,
+      output: `function f(...r) {
+  let _1 = r[1],
+    _5;
+  r.length = 3;
+  _1 = _1 + 1;
+  _5 = 2;
+  return _1 + _5;
+}`,
+    },
+    {
+      title: "先頭の length 書込みが複数なら最小値で切詰め",
+      code: `function f(...r) {
+  r.length = 5;
+  r.length = 2;
+  r[3] = 1;
+  r[1] = 1;
+  return r[3] + r[1];
+}`,
+      output: `function f(...r) {
+  let _3,
+    _1 = r[1];
+  r.length = 5;
+  r.length = 2;
+  _3 = 1;
+  _1 = 1;
+  return _3 + _1;
 }`,
     },
     {
@@ -351,11 +397,20 @@ function f(...r) {
 }`,
     ),
     unchanged(
-      "数値キー書込みと length 書込みの併用",
+      "先頭以外の位置での length 書込み (他の文の後)",
       `function f(...r) {
-  r["length"] = 1;
-  r[246] = 1;
-  return r[246];
+  foo();
+  r.length = 1;
+  r[5] = 1;
+  return r[5];
+}`,
+    ),
+    unchanged(
+      "length に非リテラルを代入",
+      `function f(...r) {
+  r.length = n;
+  r[5] = 1;
+  return r[5];
 }`,
     ),
     unchanged(

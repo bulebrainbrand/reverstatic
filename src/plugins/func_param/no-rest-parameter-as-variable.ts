@@ -10,7 +10,9 @@ import * as t from "@babel/types";
 //  - 非数値キーは `let name;` に置換 (実引数には存在し得ないので初期値は常に undefined)
 //  - 非負整数キーは書込みがあるものだけ変換し、`let _0 = r[0];` と実引数を取り込む。
 //    これで「読取が書込みより先か」という実行順の解析が不要になる
-//  - 変換した数値キーがある場合、r.length の参照は意味が変わるため諦める
+//  - 変換した数値キーがある場合、r.length の参照は意味が変わるため諦める。
+//    ただし関数先頭に連続して並ぶ `r.length = N;` (N は非負整数リテラル) だけは許可し、
+//    入口で切詰め済みとして扱う (N 以上の数値キーは初期値 undefined、未満は実引数を取り込む)
 
 // let 宣言名として使えない名前
 const RESERVED = new Set([
@@ -170,11 +172,7 @@ const classify = (
   return "read";
 };
 
-type Access = {
-  path: NodePath<t.MemberExpression>;
-  key: string;
-  kind: Kind;
-};
+type Access = { path: NodePath<t.MemberExpression>; key: string; kind: Kind };
 
 export default function (): PluginObject {
   return {
@@ -244,7 +242,7 @@ export default function (): PluginObject {
           accesses.push({ path: member, key, kind });
         }
 
-        const lengthAccessed = accesses.some((a) => a.key === "length");
+        const lengthAccesses = accesses.filter((a) => a.key === "length");
         const props = accesses.filter((a) => a.key !== "length");
 
         // 2. 変換対象のキーを決める (key -> 数値インデックスか)
@@ -263,8 +261,35 @@ export default function (): PluginObject {
           }
           convert.set(key, numeric);
         }
-        // 数値キーを変数化すると r 本体が更新されず、length の観測がずれる
-        if (lengthAccessed && [...convert.values()].some(Boolean)) {
+        // 数値キーを変数化すると r 本体が更新されず、length の観測がずれる。
+        // 例外: 関数先頭の `r.length = N;` は入口での切詰めなので許容する。
+        // 切詰め位置 cut は複数あれば最小値 (伸ばしても消えた値は戻らない)。
+        const leadingLengthWrites = new Set<t.Node>();
+        let cut = Infinity;
+        for (const stmt of body.node.body) {
+          if (!t.isExpressionStatement(stmt)) {
+            break;
+          }
+          const e = stmt.expression;
+          if (
+            !t.isAssignmentExpression(e, { operator: "=" }) ||
+            !t.isMemberExpression(e.left) ||
+            !t.isIdentifier(e.left.object, { name: restName }) ||
+            staticKey(e.left) !== "length" ||
+            !t.isNumericLiteral(e.right) ||
+            !Number.isInteger(e.right.value) ||
+            e.right.value < 0 ||
+            e.right.value >= 2 ** 32
+          ) {
+            break;
+          }
+          leadingLengthWrites.add(e.left);
+          cut = Math.min(cut, e.right.value);
+        }
+        if (
+          [...convert.values()].some(Boolean) &&
+          lengthAccesses.some((a) => !leadingLengthWrites.has(a.path.node))
+        ) {
           return;
         }
 
@@ -291,7 +316,7 @@ export default function (): PluginObject {
           declarators.push(
             t.variableDeclarator(
               t.identifier(name),
-              numeric
+              numeric && Number(key) < cut
                 ? t.memberExpression(
                     t.identifier(restName),
                     t.numericLiteral(Number(key)),
