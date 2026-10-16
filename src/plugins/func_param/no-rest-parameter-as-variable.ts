@@ -1,13 +1,19 @@
-import { type NodePath, type PluginObject } from "@babel/core";
+import type { NodePath, PluginObject } from "@babel/core";
 import * as t from "@babel/types";
 
-// 残余引数(...rest)を連想配列代わりに使い回す難読化パターンを、
-// 通常のローカル変数(let)に直す。
-// 例: function f(...r) { r["a"] = 1; return r["a"]; }
-//  -> function f(...r) { let a; a = 1; return a; }
+// 残余引数(...r)を連想配列として使い回す難読化を、通常のローカル変数(let)へ戻す。
+//   function f(...r) { r["a"] = 1; return r["a"]; }
+//   -> function f(...r) { let a; a = 1; return a; }
+//
+// 方針:
+//  - r が値として漏れる / 動的キー / delete / メソッド呼び出し等があれば関数ごと諦める
+//  - 非数値キーは `let name;` に置換 (実引数には存在し得ないので初期値は常に undefined)
+//  - 非負整数キーは書込みがあるものだけ変換し、`let _0 = r[0];` と実引数を取り込む。
+//    これで「読取が書込みより先か」という実行順の解析が不要になる
+//  - 変換した数値キーがある場合、r.length の参照は意味が変わるため諦める
 
-// 予約語 + strict mode で let 宣言できない名前
-const FORBIDDEN_NAMES = new Set([
+// let 宣言名として使えない名前
+const RESERVED = new Set([
   "arguments",
   "await",
   "break",
@@ -56,128 +62,118 @@ const FORBIDDEN_NAMES = new Set([
   "while",
   "with",
   "yield",
+  "undefined",
+  "NaN",
+  "Infinity",
 ]);
 
-// 変数化すると Array.prototype メソッド呼び出しと衝突しうるキー。
-// r.slice のような「配列全体の観測」は数値キー抽出と意味が変わるため一律bailする。
-// (r[-185].push のような値に対する呼び出しは対象外で安全)
-const ARRAY_OBSERVER_METHODS = new Set([
-  "at",
-  "concat",
-  "copyWithin",
-  "entries",
-  "every",
-  "fill",
-  "filter",
-  "find",
-  "findIndex",
-  "flat",
-  "flatMap",
-  "forEach",
-  "hasOwnProperty",
-  "includes",
-  "indexOf",
-  "isPrototypeOf",
-  "join",
-  "keys",
-  "lastIndexOf",
-  "map",
-  "pop",
-  "propertyIsEnumerable",
-  "push",
-  "reduce",
-  "reduceRight",
-  "reverse",
-  "shift",
-  "slice",
-  "some",
-  "sort",
-  "splice",
-  "toLocaleString",
-  "toReversed",
-  "toSorted",
-  "toSpliced",
-  "toString",
-  "unshift",
-  "valueOf",
-  "values",
-  "with",
-]);
+// 非数値キーでも、変数化すると「読取結果」が変わるキー (Array / Object のプロトタイプ由来)。
+// 実行環境のプロトタイプから動的に集める (手書きだと findLast 等が漏れる)。
+const PROTO_KEYS = new Set(
+  [
+    ...Object.getOwnPropertyNames(Array.prototype),
+    ...Object.getOwnPropertyNames(Object.prototype),
+    "__proto__",
+    "prototype",
+  ].filter((key) => key !== "length"),
+);
 
-// プロトタイプ汚染の恐れがあるキーは扱わない
-const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const isValidName = (name: string): boolean =>
+  /^[A-Za-z_$][\w$]*$/.test(name) && !RESERVED.has(name);
 
-const isValidIdentifierName = (name: string): boolean => {
-  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) {
-    return false;
-  }
-  return !FORBIDDEN_NAMES.has(name);
-};
-
-// 任意のキー文字列から有効な識別子名を作る
-const sanitizeBase = (key: string): string => {
-  if (isValidIdentifierName(key)) {
+const sanitize = (key: string): string => {
+  if (isValidName(key)) {
     return key;
   }
-  const prefixed = key.startsWith("-") ? `_neg${key.slice(1)}` : `_${key}`;
-  const sanitized = prefixed.replace(/[^A-Za-z0-9_$]/g, "_");
-  const named = /^[0-9]/.test(sanitized) ? `_${sanitized}` : sanitized;
-  if (named === "" || named === "_" || FORBIDDEN_NAMES.has(named)) {
-    return `_${named}`;
+  let name = key.replace(/^-/, "_neg").replace(/[^\w$]/g, "_");
+  if (/^[0-9]/.test(name)) {
+    name = `_${name}`;
   }
-  return named;
+  return isValidName(name) ? name : `_${name}`;
 };
 
-type MemberKey =
-  | { kind: "key"; key: string }
-  | { kind: "length" }
-  | { kind: "dynamic" };
+const isArrayIndex = (key: string): boolean =>
+  /^(0|[1-9][0-9]*)$/.test(key) && Number(key) < 2 ** 32 - 1;
 
-// rest[...] / rest.foo のプロパティを静的キーに正規化する。
-// 変数等の動的キーは解決できないため dynamic を返す。
-const getMemberKey = (member: t.MemberExpression): MemberKey => {
-  if (!member.computed) {
-    const property = member.property;
-    if (!t.isIdentifier(property)) {
-      return { kind: "dynamic" };
-    }
-    if (property.name === "length") {
-      return { kind: "length" };
-    }
-    return { kind: "key", key: property.name };
-  }
+// r[...] / r.foo を静的なキー文字列にする。解決できなければ undefined。
+const staticKey = (member: t.MemberExpression): string | undefined => {
   const property = member.property;
+  if (!member.computed) {
+    return t.isIdentifier(property) ? property.name : undefined;
+  }
   if (t.isStringLiteral(property)) {
-    if (property.value === "length") {
-      return { kind: "length" };
-    }
-    return { kind: "key", key: property.value };
+    return property.value;
   }
   if (t.isNumericLiteral(property)) {
-    return { kind: "key", key: String(property.value) };
+    return String(property.value);
+  }
+  if (t.isTemplateLiteral(property) && property.expressions.length === 0) {
+    return property.quasis[0]?.value.cooked ?? undefined;
   }
   if (
     t.isUnaryExpression(property, { operator: "-" }) &&
     t.isNumericLiteral(property.argument)
   ) {
-    const value = property.argument.value;
-    // r[-0] と r[0] は同一インデックス
-    return { kind: "key", key: value === 0 ? "0" : `-${String(value)}` };
+    return String(-property.argument.value); // -0 -> "0"
   }
-  return { kind: "dynamic" };
+  return undefined;
 };
 
-const isNonNegativeIntegerKey = (key: string): boolean => {
-  if (!/^(0|[1-9][0-9]*)$/.test(key)) {
-    return false;
+type Kind = "read" | "write" | "readwrite";
+
+// メンバー式の使われ方。変数化できない使われ方は "unsupported"。
+const classify = (
+  member: NodePath<t.MemberExpression>,
+): Kind | "unsupported" => {
+  const parent = member.parentPath;
+  const node = member.node;
+  if (!parent) {
+    return "unsupported";
   }
-  return Number(key) < 4294967295;
+  if (parent.isAssignmentExpression({ left: node })) {
+    return parent.node.operator === "=" ? "write" : "readwrite";
+  }
+  if (parent.isUpdateExpression()) {
+    return "readwrite";
+  }
+  // delete は変数化できない
+  if (parent.isUnaryExpression({ operator: "delete" })) {
+    return "unsupported";
+  }
+  // r.f() は this === r で呼ばれる。変数化すると this が変わる
+  if (
+    (parent.isCallExpression() || parent.isOptionalCallExpression()) &&
+    parent.node.callee === node
+  ) {
+    return "unsupported";
+  }
+  if (parent.isTaggedTemplateExpression({ tag: node })) {
+    return "unsupported";
+  }
+  if (parent.isForXStatement({ left: node })) {
+    return "write";
+  }
+  // 分割代入の書込み先
+  if (
+    parent.isArrayPattern() ||
+    parent.isRestElement({ argument: node }) ||
+    parent.isAssignmentPattern({ left: node })
+  ) {
+    return "write";
+  }
+  if (
+    parent.isObjectProperty({ value: node }) &&
+    parent.parentPath.isObjectPattern()
+  ) {
+    return "write";
+  }
+  return "read";
 };
 
 type Access = {
-  memberPath: NodePath<t.MemberExpression>;
+  path: NodePath<t.MemberExpression>;
   key: string;
-  isWrite: boolean;
+  kind: Kind;
 };
 
 export default function (): PluginObject {
@@ -185,200 +181,139 @@ export default function (): PluginObject {
     visitor: {
       Function(funcPath) {
         const params = funcPath.node.params;
-        if (params.length === 0) {
-          return;
-        }
         const last = params[params.length - 1];
-        if (!t.isRestElement(last) || !t.isIdentifier(last.argument)) {
+        if (!last || !t.isRestElement(last) || !t.isIdentifier(last.argument)) {
           return;
         }
         const restName = last.argument.name;
 
-        const bodyPath = funcPath.get("body");
-        if (Array.isArray(bodyPath) || !bodyPath.isBlockStatement()) {
-          // アロー式の式ボディ等: let を挿入できない
-          return;
+        const body = funcPath.get("body");
+        if (Array.isArray(body) || !body.isBlockStatement()) {
+          return; // 式ボディのアロー関数には let を挿入できない
         }
 
         const binding = funcPath.scope.getBinding(restName);
-        if (!binding) {
-          return;
-        }
-        // rest 自体の再代入 (r = ...) があれば対象外
-        if (binding.constantViolations.length !== 0) {
-          return;
-        }
-        if (binding.referencePaths.length === 0) {
-          return;
-        }
-
-        const accesses: Access[] = [];
-        let hasLengthRead = false;
-
-        for (const referencePath of binding.referencePaths) {
-          const parentPath = referencePath.parentPath;
-          if (!parentPath) {
-            return;
-          }
-          // OptionalMemberExpression (r?.["a"]) は意味が変わりうるためbail
-          if (parentPath.isOptionalMemberExpression()) {
-            return;
-          }
-          if (!parentPath.isMemberExpression()) {
-            // foo(r) / return r / [...r] 等: rest 自体が値として漏れている
-            return;
-          }
-          const member = parentPath.node;
-          if (member.object !== referencePath.node) {
-            // x[r] のようにキー側で使われている
-            return;
-          }
-          const memberKey = getMemberKey(member);
-          if (memberKey.kind === "dynamic") {
-            return;
-          }
-          if (memberKey.kind === "length") {
-            const grandParent = parentPath.parentPath;
-            if (
-              grandParent?.isAssignmentExpression() &&
-              grandParent.node.left === member &&
-              grandParent.node.operator === "="
-            ) {
-              // r["length"] = 1 は Array 長切詰めの副作用なのでそのまま残す
-              continue;
-            }
-            if (
-              grandParent?.isUpdateExpression() &&
-              grandParent.node.argument === member
-            ) {
-              return;
-            }
-            // r.length の読取は残すが、後で数値書込みとの併用を検査する
-            hasLengthRead = true;
-            continue;
-          }
-          const key = memberKey.key;
-          if (DANGEROUS_KEYS.has(key) || ARRAY_OBSERVER_METHODS.has(key)) {
-            return;
-          }
-
-          const grandParent = parentPath.parentPath;
-          if (!grandParent) {
-            return;
-          }
-          if (
-            grandParent.isUnaryExpression() &&
-            grandParent.node.operator === "delete" &&
-            grandParent.node.argument === member
-          ) {
-            // delete r["a"] は変数化できない
-            return;
-          }
-          let isWrite = false;
-          if (grandParent.isAssignmentExpression()) {
-            isWrite = grandParent.node.left === member;
-          } else if (grandParent.isUpdateExpression()) {
-            isWrite = grandParent.node.argument === member;
-          } else if (grandParent.isForXStatement()) {
-            isWrite = grandParent.node.left === member;
-          } else if (
-            grandParent.isArrayPattern() ||
-            grandParent.isRestElement() ||
-            grandParent.isVariableDeclarator() ||
-            grandParent.isObjectProperty() ||
-            grandParent.isObjectPattern() ||
-            (grandParent.isAssignmentPattern() &&
-              grandParent.node.left === member)
-          ) {
-            // 分割代入の書込み位置 ([r["a"]] = ...) 等
-            isWrite = true;
-          }
-          accesses.push({ memberPath: parentPath, key, isWrite });
-        }
-
-        const writtenKeys: string[] = [];
-        const writtenKeySet = new Set<string>();
-        for (const access of accesses) {
-          if (access.isWrite && !writtenKeySet.has(access.key)) {
-            writtenKeySet.add(access.key);
-            writtenKeys.push(access.key);
-          }
-        }
-        if (writtenKeys.length === 0) {
-          return;
-        }
-        // r.length 読取と数値インデックス書込みの併用は length の意味が変わる
         if (
-          hasLengthRead &&
-          writtenKeys.some((key) => isNonNegativeIntegerKey(key))
+          !binding ||
+          binding.constantViolations.length > 0 ||
+          binding.referencePaths.length === 0
         ) {
           return;
         }
-        // 書込みはないが実引数ではあり得ないキー（負数・文字列等）の読取は、
-        // 初期値がいずれも undefined で等価なため変数化する。
-        // 非負整数インデックスの純粋な読取 (実引数 r[0] 等) はそのまま残す。
-        const readOnlyKeys: string[] = [];
-        const readOnlyKeySet = new Set<string>();
-        for (const access of accesses) {
-          if (
-            !writtenKeySet.has(access.key) &&
-            !readOnlyKeySet.has(access.key) &&
-            !isNonNegativeIntegerKey(access.key)
-          ) {
-            readOnlyKeySet.add(access.key);
-            readOnlyKeys.push(access.key);
-          }
-        }
-        const allKeys = [...writtenKeys, ...readOnlyKeys];
 
-        // 衝突回避用に内側の参照名・宣言名を集める。
-        // ネスト関数内で同名のグローバル参照がある場合に外側 let が捕捉するのを防ぐ。
-        const taken = new Set<string>([restName]);
+        // 直接 eval / with があると変数が動的に参照されうる
+        let dynamicScope = false;
         funcPath.traverse({
-          ReferencedIdentifier(innerPath) {
-            taken.add(innerPath.node.name);
+          WithStatement(path) {
+            dynamicScope = true;
+            path.stop();
+          },
+          CallExpression(path) {
+            if (t.isIdentifier(path.node.callee, { name: "eval" })) {
+              dynamicScope = true;
+              path.stop();
+            }
           },
         });
-        for (const name of Object.keys(funcPath.scope.getAllBindings())) {
-          taken.add(name);
+        if (dynamicScope) {
+          return;
         }
 
-        const keyToName = new Map<string, string>();
-        for (const key of allKeys) {
-          const base = sanitizeBase(key);
-          let name = base;
+        // 1. r の全参照を集める。1つでも想定外なら関数ごと諦める
+        const accesses: Access[] = [];
+        for (const ref of binding.referencePaths) {
+          const member = ref.parentPath;
+          // r?.a (Optional) / foo(r) / x[r] などはここで弾かれる
           if (
-            taken.has(name) ||
-            funcPath.scope.hasBinding(name) ||
-            funcPath.scope.hasReference(name)
+            !member?.isMemberExpression() ||
+            member.node.object !== ref.node
           ) {
-            name = funcPath.scope.generateUidIdentifier(base).name;
-            let counter = 2;
-            while (taken.has(name)) {
-              name = `${name}${counter}`;
-              counter += 1;
-            }
+            return;
           }
-          keyToName.set(key, name);
-          taken.add(name);
+          const key = staticKey(member.node);
+          if (key === undefined) {
+            return;
+          }
+          if (PROTO_KEYS.has(key)) {
+            return;
+          }
+          const kind = classify(member);
+          if (kind === "unsupported") {
+            return;
+          }
+          accesses.push({ path: member, key, kind });
         }
 
-        const declarators = allKeys.map((key) =>
-          t.variableDeclarator(t.identifier(keyToName.get(key) ?? key)),
+        const lengthAccessed = accesses.some((a) => a.key === "length");
+        const props = accesses.filter((a) => a.key !== "length");
+
+        // 2. 変換対象のキーを決める (key -> 数値インデックスか)
+        const written = new Set(
+          props.filter((a) => a.kind !== "read").map((a) => a.key),
         );
-        bodyPath.unshiftContainer(
+        if (written.size === 0) {
+          return;
+        }
+        const convert = new Map<string, boolean>();
+        for (const { key } of props) {
+          const numeric = isArrayIndex(key);
+          // 書込みのない非負整数の読取は実引数そのものなので触らない
+          if (numeric && !written.has(key)) {
+            continue;
+          }
+          convert.set(key, numeric);
+        }
+        // 数値キーを変数化すると r 本体が更新されず、length の観測がずれる
+        if (lengthAccessed && [...convert.values()].some(Boolean)) {
+          return;
+        }
+
+        // 3. 変数名を決める。衝突相手: r、外側/グローバル、使用箇所に見える内側の宣言
+        const scope = funcPath.scope;
+        const useScopes = new Set(accesses.map((a) => a.path.scope));
+        const chosen = new Set<string>();
+        const conflicts = (name: string): boolean =>
+          chosen.has(name) ||
+          name === restName ||
+          scope.hasBinding(name) ||
+          scope.hasGlobal(name) ||
+          [...useScopes].some((s) => s.hasBinding(name));
+
+        const names = new Map<string, string>();
+        const declarators: t.VariableDeclarator[] = [];
+        for (const [key, numeric] of convert) {
+          let name = sanitize(key);
+          if (conflicts(name)) {
+            name = scope.generateUid(name);
+          }
+          chosen.add(name);
+          names.set(key, name);
+          declarators.push(
+            t.variableDeclarator(
+              t.identifier(name),
+              numeric
+                ? t.memberExpression(
+                    t.identifier(restName),
+                    t.numericLiteral(Number(key)),
+                    true,
+                  )
+                : null,
+            ),
+          );
+        }
+
+        // 4. 宣言を先頭に挿入し、アクセスを識別子へ置換
+        body.unshiftContainer(
           "body",
           t.variableDeclaration("let", declarators),
         );
         for (const access of accesses) {
-          const name = keyToName.get(access.key);
-          if (name === undefined) {
-            // 非負整数インデックスの純粋な読取 (実引数 r[0] 等) はそのまま残す
-            continue;
+          const name = names.get(access.key);
+          if (name !== undefined) {
+            access.path.replaceWith(t.identifier(name));
           }
-          access.memberPath.replaceWith(t.identifier(name));
         }
-        funcPath.scope.crawl();
+        scope.crawl();
       },
     },
   };
