@@ -96,7 +96,7 @@ var y = UpSCOg0(a, b);`,
       output: `function UpSCOg0() {
   UpSCOg0 = function () {};
 }
-var y = UpSCOg0(a, b);`,
+var y = (a, b, void 0);`,
     },
     {
       code: `function UpSCOg0() { UpSCOg0 = function () {}; }
@@ -104,7 +104,7 @@ if (UpSCOg0(a)) { b(); }`,
       output: `function UpSCOg0() {
   UpSCOg0 = function () {};
 }
-if (UpSCOg0(a)) {
+if ((a, void 0)) {
   b();
 }`,
     },
