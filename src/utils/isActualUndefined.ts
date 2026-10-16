@@ -1,8 +1,9 @@
 import type { NodePath } from "@babel/core";
 import { Result } from "@praha/byethrow";
+type IsActualUndefinedError = "non identifier" | "name is not undefined";
 export const isActualUndefined = (
   path: NodePath,
-): Result.Result<boolean, string> => {
+): Result.Result<boolean, IsActualUndefinedError> => {
   if (!path.isIdentifier()) return Result.fail("non identifier");
   if (path.node.name !== "undefined")
     return Result.fail("name is not undefined");

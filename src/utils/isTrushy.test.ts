@@ -2,9 +2,11 @@ import { describe, it, expect } from "vite-plus/test";
 import { traverse } from "@babel/core";
 import * as t from "@babel/types";
 import { Result } from "@praha/byethrow";
-import { isTruhy } from "./isTrushy";
+import { isTruhy, type IsTurhyError } from "./isTrushy";
 
-const isTruhyAtPath = (node: t.Expression): Result.Result<boolean, string> => {
+const isTruhyAtPath = (
+  node: t.Expression,
+): Result.Result<boolean, IsTurhyError> => {
   const ast = t.file(
     t.program([
       t.variableDeclaration("const", [
@@ -12,7 +14,7 @@ const isTruhyAtPath = (node: t.Expression): Result.Result<boolean, string> => {
       ]),
     ]),
   );
-  let result: Result.Result<boolean, string> | undefined;
+  let result: Result.Result<boolean, IsTurhyError> | undefined;
 
   traverse(ast, {
     Expression(path) {

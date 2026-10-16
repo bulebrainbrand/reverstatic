@@ -44,8 +44,7 @@ do {
 do {
   const a = 1;
   console.log(a);
-  foo();
-} while (((a = b), (c = d)));`,
+} while (((a = b), foo(), (c = d)));`,
     },
     {
       code: `do{const a = 1;console.log(a)}while((foo(a), c = d))`,

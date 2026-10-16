@@ -2,7 +2,13 @@ import { Result } from "@praha/byethrow";
 import * as t from "@babel/types";
 import type { NodePath } from "@babel/core";
 import { isActualUndefined } from "./isActualUndefined";
-export const isTruhy = (path: NodePath): Result.Result<boolean, string> => {
+export type IsTurhyError =
+  | "can't judge identifier"
+  | "unexpected node"
+  | IsLiteralTruhy;
+export const isTruhy = (
+  path: NodePath,
+): Result.Result<boolean, IsTurhyError> => {
   if (t.isLiteral(path.node)) return isLitealTruhy(path.node);
   if (t.isIdentifier(path.node)) {
     const isUndefinedResult = isActualUndefined(path);
@@ -16,10 +22,10 @@ export const isTruhy = (path: NodePath): Result.Result<boolean, string> => {
   }
   return Result.fail("unexpected node");
 };
-
+export type IsLiteralTruhy = "can't judge template literal" | "unexpected";
 export const isLitealTruhy = (
   node: t.Literal,
-): Result.Result<boolean, string> => {
+): Result.Result<boolean, IsLiteralTruhy> => {
   if (node.type === "BooleanLiteral") {
     return Result.succeed(node.value);
   }
