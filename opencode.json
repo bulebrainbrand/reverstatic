@@ -19,7 +19,10 @@
       "git diff *": "allow",
       "file *": "allow",
       "cat *": "allow",
-      "sort *": "allow"
+      "sort *": "allow",
+      "vpr check *": "allow",
+      "vpr lint *": "allow",
+      "vpr fmt *": "allow"
     },
     "edit": {
       "*": "deny",
