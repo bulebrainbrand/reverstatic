@@ -13,30 +13,6 @@ const a = 1;
 Math.log2(a);
 ```
 
-### 定数伝播 constant-propagation
-
-no-constant-arrayはすでにあるが、数値などはない
-
-```js
-// before
-const a = 0;
-console.log(a);
-// after
-const __unused_a__ = 0;
-console.log(0);
-```
-
-```js
-// before
-const a = 0,
-  b = a;
-console.log(b);
-// after
-const __unused_a__ = 0,
-  __unused_b__ = __unused_a__;
-console.log(0);
-```
-
 ### no-atob
 
 atobをたたむ
