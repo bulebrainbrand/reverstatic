@@ -1,233 +1,154 @@
-import { type NodePath, type PluginObject, PluginPass } from "@babel/core";
+import type { NodePath, PluginObject, PluginPass } from "@babel/core";
 import * as t from "@babel/types";
 
-function isBindingInside(binding: any, container: NodePath): boolean {
-  let current: NodePath | null = binding.path;
-  while (current) {
-    if (current === container) {
-      return true;
-    }
-    current = current.parentPath;
-  }
-  return false;
-}
+/**
+ * for 文の test / update に詰め込まれたカンマ式を、可能なものだけ body 側へ移す。
+ *
+ *   for (; P, C; U) B   →   for (; C; U) { P; B }  P;     (test:  P は条件 C の後ろへ)
+ *   for (; C; P, U) B   →   for (; C; U) { B; P }          (update: P は body の末尾へ)
+ *
+ * 式の順序を入れ替える場合は「互いに読み書きしない」ことを確認し、
+ * 確認できない式は元のカンマ式に残す。
+ *
+ * 前提: プロパティ読み出し・演算子が起こす副作用(getter / valueOf / Proxy など)は無視する。
+ */
 
-function isVariableReference(innerPath: any): boolean {
-  // isReferencedIdentifier() returns false for assignment targets (`a = b`
-  // left `a`), but moving them into the body would still capture the body's
-  // binding. Treat every identifier as a variable reference except for
-  // positions that are clearly not (property keys, labels, etc.).
-  const parent = innerPath.parent;
-  if (!parent) {
-    return true;
-  }
-  if (
-    (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) &&
-    parent.property === innerPath.node &&
-    !parent.computed
-  ) {
-    return false;
-  }
-  if (
-    t.isObjectProperty(parent) &&
-    parent.key === innerPath.node &&
-    !parent.computed &&
-    parent.value !== innerPath.node
-  ) {
-    return false;
-  }
-  if (
-    (t.isObjectMethod(parent) ||
-      t.isClassMethod(parent) ||
-      t.isClassPrivateMethod(parent)) &&
-    parent.key === innerPath.node &&
-    !parent.computed
-  ) {
-    return false;
-  }
-  if (t.isPrivateName(parent)) {
-    return false;
-  }
-  if (
-    (t.isLabeledStatement(parent) && parent.label === innerPath.node) ||
-    ((t.isBreakStatement(parent) || t.isContinueStatement(parent)) &&
-      parent.label === innerPath.node)
-  ) {
-    return false;
-  }
-  return true;
-}
+type Scope = NodePath["scope"];
+type ForPath = NodePath<t.ForStatement>;
 
-function isCapturedByBody(
-  identifierPath: any,
-  exprPath: NodePath,
-  bodyScope: any,
-): boolean {
-  if (!isVariableReference(identifierPath)) {
-    return false;
-  }
-  const name = identifierPath.node.name;
-  const bodyBinding = bodyScope?.getOwnBinding?.(name);
-  if (!bodyBinding) {
-    return false;
-  }
-  // References bound inside the moving expression itself (e.g. arrow
-  // function parameters) move together with their binding.
-  const refBinding = identifierPath.scope.getBinding(name);
-  if (refBinding && isBindingInside(refBinding, exprPath)) {
-    return false;
-  }
-  if (refBinding === bodyBinding) {
-    return false;
-  }
-  return true;
-}
-
-function isCaptured(exprPath: NodePath, bodyScope: any): boolean {
-  // Note: traverse() does not visit the root itself, so check it separately
-  // to handle bare identifiers like `a` in `for (; ; a, i++)`.
-  if (exprPath.isIdentifier()) {
-    if (isCapturedByBody(exprPath, exprPath, bodyScope)) {
-      return true;
-    }
-  }
-  let captured = false;
-  exprPath.traverse({
-    Identifier(innerPath: any) {
-      if (captured) {
-        return;
-      }
-      if (isCapturedByBody(innerPath, exprPath, bodyScope)) {
-        captured = true;
-        innerPath.stop();
-      }
-    },
-  });
-  return captured;
-}
-
-function getExprInfo(exprPath: NodePath): {
+/** 式が読む変数名・書く変数名と、副作用を追えない(= 順序を変えられない)かどうか */
+interface Effects {
   reads: Set<string>;
   writes: Set<string>;
   unknown: boolean;
-} {
-  const reads = new Set<string>();
-  const writes = new Set<string>();
-  let unknown = false;
-  // Note: traverse() does not visit the root itself.
-  if (
-    exprPath.isCallExpression() ||
-    exprPath.isNewExpression() ||
-    exprPath.isYieldExpression() ||
-    exprPath.isAwaitExpression()
-  ) {
-    unknown = true;
-  }
-  if (exprPath.isAssignmentExpression()) {
-    const left: any = exprPath.node.left;
-    if (
-      t.isMemberExpression(left) ||
-      t.isOptionalMemberExpression(left) ||
-      left.type === "ArrayPattern" ||
-      left.type === "ObjectPattern"
-    ) {
-      unknown = true;
-    }
-  }
-  if (exprPath.isUpdateExpression()) {
-    const arg = exprPath.node.argument;
-    if (!t.isIdentifier(arg)) {
-      unknown = true;
-    }
-  }
-  if (
-    exprPath.isUnaryExpression() &&
-    exprPath.node.operator === "delete" &&
-    t.isMemberExpression(exprPath.node.argument)
-  ) {
-    unknown = true;
-  }
-  exprPath.traverse({
-    CallExpression() {
-      unknown = true;
-    },
-    NewExpression() {
-      unknown = true;
-    },
-    YieldExpression() {
-      unknown = true;
-    },
-    AwaitExpression() {
-      unknown = true;
-    },
-    AssignmentExpression(assignPath: any) {
-      const left = assignPath.node.left;
-      if (t.isMemberExpression(left) || t.isOptionalMemberExpression(left)) {
-        unknown = true;
-      }
-    },
-    UpdateExpression(updatePath: any) {
-      const arg = updatePath.node.argument;
-      if (!t.isIdentifier(arg)) {
-        unknown = true;
-      }
-    },
-    UnaryExpression(unaryPath: any) {
-      if (
-        unaryPath.node.operator === "delete" &&
-        t.isMemberExpression(unaryPath.node.argument)
-      ) {
-        unknown = true;
-      }
-    },
-    Identifier(innerPath: any) {
-      if (!isVariableReference(innerPath)) {
-        return;
-      }
-      const name = innerPath.node.name;
-      const parent = innerPath.parent;
-      if (!parent) {
-        reads.add(name);
-        return;
-      }
-      if (
-        parent.type === "AssignmentExpression" &&
-        parent.left === innerPath.node
-      ) {
-        if (parent.operator === "=") {
-          writes.add(name);
-        } else {
-          reads.add(name);
-          writes.add(name);
-        }
-        return;
-      }
-      if (
-        parent.type === "UpdateExpression" &&
-        parent.argument === innerPath.node
-      ) {
-        reads.add(name);
-        writes.add(name);
-        return;
-      }
-      if (
-        parent.type === "ArrayPattern" ||
-        parent.type === "ObjectPattern" ||
-        parent.type === "RestElement"
-      ) {
-        writes.add(name);
-        return;
-      }
-      reads.add(name);
-    },
-  });
-  return { reads, writes, unknown };
 }
 
-function independent(
-  a: { reads: Set<string>; writes: Set<string>; unknown: boolean },
-  b: { reads: Set<string>; writes: Set<string>; unknown: boolean },
+// ---------------------------------------------------------------------------
+// 識別子の判定
+// ---------------------------------------------------------------------------
+
+/**
+ * 変数を指す識別子か。
+ * isReferencedIdentifier() は代入の左辺を除外してしまうため、
+ * プロパティ名・ラベルなど「明らかに変数ではない位置」だけを除外する方式にしている。
+ */
+function isVariableReference(path: NodePath<t.Identifier>): boolean {
+  const { node, parent } = path;
+
+  if (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) {
+    return !(parent.property === node && !parent.computed);
+  }
+  if (t.isObjectProperty(parent)) {
+    return !(parent.key === node && !parent.computed && parent.value !== node);
+  }
+  if (
+    t.isObjectMethod(parent) ||
+    t.isClassMethod(parent) ||
+    t.isClassProperty(parent)
+  ) {
+    return !(parent.key === node && !parent.computed);
+  }
+  if (t.isLabeledStatement(parent)) {
+    return parent.label !== node;
+  }
+  if (t.isBreakStatement(parent) || t.isContinueStatement(parent)) {
+    return parent.label !== node;
+  }
+  if (t.isPrivateName(parent) || t.isMetaProperty(parent)) {
+    return false;
+  }
+  return true;
+}
+
+/** root 以下に、pred を満たす「変数を指す識別子」があるか(root 自身も調べる) */
+function someReference(
+  root: NodePath,
+  pred: (id: NodePath<t.Identifier>) => boolean,
 ): boolean {
+  let hit = false;
+  const check = (id: NodePath<t.Identifier>) => {
+    if (!hit && isVariableReference(id) && pred(id)) {
+      hit = true;
+    }
+  };
+  // NodePath#traverse は root 自身を訪れない
+  if (root.isIdentifier()) {
+    check(root);
+  }
+  root.traverse({
+    Identifier(id) {
+      check(id);
+      if (hit) {
+        id.stop();
+      }
+    },
+  });
+  return hit;
+}
+
+const isWithin = (path: NodePath, container: NodePath): boolean =>
+  path === container || !!path.findParent((p) => p === container);
+
+// ---------------------------------------------------------------------------
+// 副作用の要約と独立性
+// ---------------------------------------------------------------------------
+
+/** 評価すると何が起きるか追えない式。含んでいたら順序を変えない */
+const OPAQUE_NODE_TYPES = new Set([
+  "CallExpression",
+  "OptionalCallExpression",
+  "NewExpression",
+  "TaggedTemplateExpression",
+  "ImportExpression",
+  "YieldExpression",
+  "AwaitExpression",
+  "ClassExpression",
+]);
+
+function analyze(root: NodePath): Effects {
+  const fx: Effects = { reads: new Set(), writes: new Set(), unknown: false };
+
+  const visit = (path: NodePath): void => {
+    const { node, parent } = path;
+    if (OPAQUE_NODE_TYPES.has(node.type)) {
+      fx.unknown = true;
+    } else if (t.isAssignmentExpression(node)) {
+      // 識別子以外(メンバー・分割代入)への代入は影響範囲が読めない
+      if (!t.isIdentifier(node.left)) {
+        fx.unknown = true;
+      }
+    } else if (t.isUpdateExpression(node)) {
+      if (!t.isIdentifier(node.argument)) {
+        fx.unknown = true;
+      }
+    } else if (t.isUnaryExpression(node, { operator: "delete" })) {
+      fx.unknown = true;
+    } else if (
+      t.isIdentifier(node) &&
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+      isVariableReference(path as NodePath<t.Identifier>)
+    ) {
+      if (t.isAssignmentExpression(parent) && parent.left === node) {
+        fx.writes.add(node.name);
+        if (parent.operator !== "=") {
+          fx.reads.add(node.name); // 複合代入は読んでから書く
+        }
+      } else if (t.isUpdateExpression(parent)) {
+        fx.reads.add(node.name);
+        fx.writes.add(node.name);
+      } else {
+        fx.reads.add(node.name);
+      }
+    }
+  };
+
+  visit(root); // traverse は root 自身を訪れないので別に呼ぶ
+  root.traverse({ enter: visit });
+  return fx;
+}
+
+/** a と b を入れ替えても結果が変わらないか */
+function independent(a: Effects, b: Effects): boolean {
   if (a.unknown || b.unknown) {
     return false;
   }
@@ -244,365 +165,308 @@ function independent(
   return true;
 }
 
-function combineInfos(
-  infos: { reads: Set<string>; writes: Set<string>; unknown: boolean }[],
-): { reads: Set<string>; writes: Set<string>; unknown: boolean } {
-  const reads = new Set<string>();
-  const writes = new Set<string>();
-  let unknown = false;
-  for (const info of infos) {
-    for (const r of info.reads) {
-      reads.add(r);
-    }
-    for (const w of info.writes) {
-      writes.add(w);
-    }
-    if (info.unknown) {
-      unknown = true;
-    }
-  }
-  return { reads, writes, unknown };
+// ---------------------------------------------------------------------------
+// 移動先で意味が変わらないか
+// ---------------------------------------------------------------------------
+
+/** body がブロックならそのスコープ。単文 body は宣言を持てないので undefined */
+function bodyBlockScope(body: NodePath): Scope | undefined {
+  return body.isBlockStatement() ? body.scope : undefined;
 }
 
-function findNearestBreakable(innerPath: any): any {
-  let current = innerPath.parentPath;
-  while (current) {
-    if (current.isLoop && current.isLoop()) {
-      return current;
-    }
-    if (current.isSwitchStatement && current.isSwitchStatement()) {
-      return current;
-    }
-    current = current.parentPath;
+/** body へ移すと、body 直下の let/const/function 宣言に参照を奪われるか */
+function capturedByBody(expr: NodePath, bodyScope: Scope | undefined): boolean {
+  if (!bodyScope) {
+    return false;
   }
-  return null;
-}
-
-function bodyMayAbrupt(
-  bodyPath: NodePath,
-  outerFor: NodePath,
-  kinds: { breakLike: boolean; continueLike: boolean },
-): boolean {
-  let found = false;
-  bodyPath.traverse({
-    Function() {
-      // Do not descend into nested functions: return/throw/break there
-      // does not affect the outer loop.
+  return someReference(expr, (id) => {
+    const name = id.node.name;
+    const own = bodyScope.getOwnBinding(name);
+    if (!own) {
       return false;
+    }
+    const ref = id.scope.getBinding(name);
+    if (ref === own) {
+      return false;
+    }
+    // 式の内側で宣言された変数(アロー関数の引数など)は式と一緒に動く
+    return !(ref && isWithin(ref.path, expr));
+  });
+}
+
+/** ループの後ろへ複製すると、for の init で宣言した let/const がスコープ外になるか */
+function usesLoopScopedBinding(expr: NodePath, loopScope: Scope): boolean {
+  return someReference(expr, (id) => {
+    const ref = id.scope.getBinding(id.node.name);
+    return !!ref && ref.scope === loopScope && !isWithin(ref.path, expr);
+  });
+}
+
+/**
+ * init が let/const で、ループ内に関数やクラスがあるか。
+ * 反復ごとの環境コピーがクロージャから観測できるので、
+ * update の式を body 末尾へ移すと、クロージャが見る値が変わりうる。
+ */
+function hasObservablePerIterationBindings(loop: ForPath): boolean {
+  if (Object.keys(loop.scope.bindings).length === 0) {
+    return false;
+  }
+  let found = false;
+  const mark = (p: NodePath) => {
+    found = true;
+    p.stop();
+  };
+  loop.traverse({ Function: mark, Class: mark });
+  return found;
+}
+
+// ---------------------------------------------------------------------------
+// break / continue の行き先
+// ---------------------------------------------------------------------------
+
+function labelsOf(loop: ForPath): Set<string> {
+  const labels = new Set<string>();
+  for (let p = loop.parentPath; p?.isLabeledStatement(); p = p.parentPath) {
+    labels.add(p.node.label.name);
+  }
+  return labels;
+}
+
+/** body の中に、loop 自身を行き先とする break(または continue)があるか */
+function jumpsToLoop(
+  body: NodePath,
+  loop: ForPath,
+  kind: "break" | "continue",
+): boolean {
+  const labels = labelsOf(loop);
+  type Jump = NodePath<t.BreakStatement> | NodePath<t.ContinueStatement>;
+
+  const targetsLoop = (jump: Jump): boolean => {
+    const { label } = jump.node;
+    if (label) {
+      return labels.has(label.name);
+    }
+    // 無印 break は最寄りのループか switch、無印 continue は最寄りのループが行き先
+    const target = jump.findParent(
+      (p) => p.isLoop() || (kind === "break" && p.isSwitchStatement()),
+    );
+    return target?.node === loop.node;
+  };
+
+  // NodePath#traverse は root 自身を訪れないので、body が単体の break/continue のときだけ別扱い
+  if (kind === "break" && body.isBreakStatement()) {
+    return targetsLoop(body);
+  }
+  if (kind === "continue" && body.isContinueStatement()) {
+    return targetsLoop(body);
+  }
+
+  let found = false;
+  const onJump = (jump: Jump) => {
+    if (targetsLoop(jump)) {
+      found = true;
+      jump.stop();
+    }
+  };
+  body.traverse({
+    // ネストした関数内の break/continue は外側のループに影響しない
+    Function(fn) {
+      fn.skip();
     },
-    BreakStatement(innerPath: any) {
-      if (found || !kinds.breakLike) {
-        return;
-      }
-      if (innerPath.node.label) {
-        found = true;
-        innerPath.stop();
-        return;
-      }
-      const target = findNearestBreakable(innerPath);
-      if (!target || target === outerFor) {
-        // No breakable or directly targets the outer for: exits the loop,
-        // so a suffix after the loop would double-execute.
-        // (break inside switch targets the switch, ignored.)
-        if (!target || (target.isLoop && target.isLoop())) {
-          found = true;
-          innerPath.stop();
-        }
-      }
-    },
-    ReturnStatement() {
-      if (kinds.breakLike) {
-        found = true;
-      }
-    },
-    ThrowStatement() {
-      if (kinds.breakLike) {
-        found = true;
-      }
-    },
-    ContinueStatement(innerPath: any) {
-      if (found || !kinds.continueLike) {
-        return;
-      }
-      if (innerPath.node.label) {
-        found = true;
-        innerPath.stop();
-        return;
-      }
-      const target = findNearestBreakable(innerPath);
-      if (target === outerFor) {
-        found = true;
-        innerPath.stop();
-      }
-    },
+    ...(kind === "break"
+      ? { BreakStatement: onJump }
+      : { ContinueStatement: onJump }),
   });
   return found;
 }
 
-function canInsertAfter(path: NodePath): boolean {
-  const parent = path.parentPath;
-  if (!parent) {
-    return false;
+// ---------------------------------------------------------------------------
+// 移す式 / 残す式の振り分け
+// ---------------------------------------------------------------------------
+
+/**
+ * 先頭側の式(prefix)のうち、元のカンマ式に「残す」ものを決める。
+ *
+ * 移す式は、残す式と相対位置が入れ替わる側でのみ順序が変わる。
+ * そこで、入れ替わる側から順に調べ、
+ *   - 移動できないと分かっている式(pinned)
+ *   - すでに「残す」と決めた式と独立でない式
+ * を残すことにする(1 パスで確定する)。
+ *
+ * "backward": test 用。移す式は条件の後ろへ行くので、自分より後ろに残る式と入れ替わる
+ * "forward" : update 用。移す式は末尾へ行くので、自分より前に残る式と入れ替わる
+ */
+function chooseKept(
+  effects: Effects[],
+  pinned: boolean[],
+  direction: "forward" | "backward",
+): boolean[] {
+  const order = effects.map((_, i) => i);
+  if (direction === "backward") {
+    order.reverse();
   }
-  if (
-    parent.isBlockStatement() ||
-    parent.isProgram() ||
-    parent.isStaticBlock() ||
-    parent.isSwitchCase()
-  ) {
-    return true;
+  const kept = effects.map(() => false);
+  const keptSoFar: number[] = [];
+  for (const i of order) {
+    kept[i] =
+      pinned[i] || keptSoFar.some((j) => !independent(effects[i], effects[j]));
+    if (kept[i]) {
+      keptSoFar.push(i);
+    }
   }
-  return false;
+  return kept;
 }
 
-export default function (): PluginObject<PluginPass> {
+function splitSequence(seq: NodePath<t.SequenceExpression>) {
+  const exprs = seq.get("expressions");
+  return { prefix: exprs.slice(0, -1), last: exprs[exprs.length - 1] };
+}
+
+/** 振り分け結果から「移す式」と「元の位置に残る式(最後の式を含む)」を作る */
+function rebuild(
+  prefix: NodePath<t.Expression>[],
+  kept: boolean[],
+  last: NodePath<t.Expression>,
+) {
+  const moved = prefix.filter((_, i) => !kept[i]).map((p) => p.node);
+  const stay = prefix.filter((_, i) => kept[i]).map((p) => p.node);
+  const remaining =
+    stay.length > 0 ? t.sequenceExpression([...stay, last.node]) : last.node;
+  return { moved, remaining };
+}
+
+const toStatements = (exprs: t.Expression[]) =>
+  exprs.map((e) => t.expressionStatement(e));
+
+function ensureBlockBody(node: t.ForStatement): t.BlockStatement {
+  if (!t.isBlockStatement(node.body)) {
+    node.body = t.blockStatement([node.body]);
+  }
+  return node.body;
+}
+
+function canInsertAfter(path: NodePath): boolean {
+  const parent = path.parentPath;
+  return (
+    !!parent &&
+    (parent.isBlockStatement() ||
+      parent.isProgram() ||
+      parent.isStaticBlock() ||
+      parent.isSwitchCase())
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 変換本体
+// ---------------------------------------------------------------------------
+
+/**
+ * init のカンマ式。
+ * init はループ前に一度だけ評価されるので、順序を保ったまま文として前に出せる。
+ *
+ *   for (P1, P2; C; U) B   →   P1; P2; for (; C; U) B
+ */
+function hoistFromInit(loop: ForPath): void {
+  const init = loop.get("init");
+  if (!init.isSequenceExpression()) {
+    return;
+  }
+
+  const exprs = init.get("expressions").map((expr) => expr.node);
+  loop.node.init = null;
+  loop.insertBefore(toStatements(exprs));
+  loop.scope.crawl();
+}
+
+/**
+ * test のカンマ式。
+ * 元: 各反復で P → C → B、最後に P → C(false)。
+ * 後: C → P → B(P は body 先頭)、最後に C(false) → P(ループ直後に複製)。
+ */
+function hoistFromTest(loop: ForPath): void {
+  const test = loop.get("test");
+  if (!test.isSequenceExpression()) {
+    return;
+  }
+  // ループ直後に複製を置ける位置であること
+  if (!canInsertAfter(loop)) {
+    return;
+  }
+  // body 内の break でループを抜けると、P が複製分と合わせて二重に実行される
+  // (continue / return / throw は問題ない)
+  if (jumpsToLoop(loop.get("body"), loop, "break")) {
+    return;
+  }
+
+  const { prefix, last } = splitSequence(test);
+  const bodyScope = bodyBlockScope(loop.get("body"));
+  const lastEffects = analyze(last);
+  const effects = prefix.map(analyze);
+  const pinned = prefix.map(
+    (expr, i) =>
+      capturedByBody(expr, bodyScope) ||
+      usesLoopScopedBinding(expr, loop.scope) ||
+      !independent(effects[i], lastEffects), // C と順序が入れ替わる
+  );
+  const { moved, remaining } = rebuild(
+    prefix,
+    chooseKept(effects, pinned, "backward"),
+    last,
+  );
+  if (moved.length === 0) {
+    return;
+  }
+
+  loop.node.test = remaining;
+  ensureBlockBody(loop.node).body.unshift(...toStatements(moved));
+  loop.insertAfter(toStatements(moved.map((e) => t.cloneNode(e))));
+  loop.scope.crawl();
+}
+
+/**
+ * update のカンマ式。
+ * 元: 各反復で B → P → U → C。
+ * 後: B → P(body 末尾) → U → C。
+ */
+function hoistFromUpdate(loop: ForPath): void {
+  const update = loop.get("update");
+  if (!update.isSequenceExpression()) {
+    return;
+  }
+  // body 内の continue は、末尾へ移した P を飛ばしてしまう
+  // (break は元の update も走らないので問題ない)
+  if (jumpsToLoop(loop.get("body"), loop, "continue")) {
+    return;
+  }
+  if (hasObservablePerIterationBindings(loop)) {
+    return;
+  }
+
+  const { prefix, last } = splitSequence(update);
+  const bodyScope = bodyBlockScope(loop.get("body"));
+  const effects = prefix.map(analyze);
+  const pinned = prefix.map((expr) => capturedByBody(expr, bodyScope));
+  const { moved, remaining } = rebuild(
+    prefix,
+    chooseKept(effects, pinned, "forward"),
+    last,
+  );
+  if (moved.length === 0) {
+    return;
+  }
+
+  loop.node.update = remaining;
+  ensureBlockBody(loop.node).body.push(...toStatements(moved));
+  loop.scope.crawl();
+}
+
+export default function forSequenceHoist(): PluginObject<PluginPass> {
   return {
     visitor: {
-      ForStatement(path, state) {
-        const { node } = path;
-
-        // Handle condition with sequence expression.
-        // Original per iteration: P... -> C -> B.
-        // Transformed per iteration: C -> P...(head) -> B, plus one suffix
-        // after the loop for the failing test. Requires P vs C independence,
-        // P vs remaining independence, no abrupt exit (suffix would double),
-        // and a safe parent for insertAfter.
-        const testPath = path.get("test");
-        if (!Array.isArray(testPath) && testPath.isSequenceExpression()) {
-          const bodyPath = path.get("body");
-          if (!Array.isArray(bodyPath)) {
-            const doTest =
-              canInsertAfter(path) &&
-              !bodyMayAbrupt(bodyPath, path, {
-                breakLike: true,
-                continueLike: false,
-              });
-            if (doTest) {
-              const bodyScope = bodyPath.scope;
-              const exprPaths = testPath.get("expressions");
-              const lastExprPath = exprPaths[exprPaths.length - 1];
-              const prefixExprPaths = exprPaths.slice(0, -1);
-              const prefixInfos = prefixExprPaths.map((exprPath) =>
-                getExprInfo(exprPath),
-              );
-              const condInfo = getExprInfo(lastExprPath);
-
-              // Single partition pass: capture first, then fixpoint for
-              // cond/remaining independence.
-              const remaining = new Set<number>();
-              for (let i = 0; i < prefixExprPaths.length; i++) {
-                if (isCaptured(prefixExprPaths[i], bodyScope)) {
-                  remaining.add(i);
-                }
-              }
-              for (let i = 0; i < prefixExprPaths.length; i++) {
-                if (
-                  !remaining.has(i) &&
-                  !independent(prefixInfos[i], condInfo)
-                ) {
-                  remaining.add(i);
-                }
-              }
-              let changed = true;
-              while (changed) {
-                changed = false;
-                const remainingInfos: {
-                  reads: Set<string>;
-                  writes: Set<string>;
-                  unknown: boolean;
-                }[] = [];
-                for (const i of remaining) {
-                  remainingInfos.push(prefixInfos[i]);
-                }
-                if (remainingInfos.length === 0) {
-                  break;
-                }
-                const combined = combineInfos(remainingInfos);
-                for (let i = 0; i < prefixExprPaths.length; i++) {
-                  if (
-                    !remaining.has(i) &&
-                    !independent(prefixInfos[i], combined)
-                  ) {
-                    remaining.add(i);
-                    changed = true;
-                  }
-                }
-              }
-
-              const extractablePaths: NodePath[] = [];
-              const remainingPaths: NodePath[] = [];
-              for (let i = 0; i < prefixExprPaths.length; i++) {
-                if (remaining.has(i)) {
-                  remainingPaths.push(prefixExprPaths[i]);
-                } else {
-                  extractablePaths.push(prefixExprPaths[i]);
-                }
-              }
-
-              if (extractablePaths.length > 0) {
-                const lastNode = lastExprPath.node;
-                if (!t.isExpression(lastNode)) {
-                  return;
-                }
-                const lastExpr = lastNode;
-                const extractableExprs: t.Expression[] = [];
-                const remainingExprs: t.Expression[] = [];
-                for (const exprPath of extractablePaths) {
-                  if (t.isExpression(exprPath.node)) {
-                    extractableExprs.push(exprPath.node);
-                  } else {
-                    return;
-                  }
-                }
-                for (const exprPath of remainingPaths) {
-                  if (t.isExpression(exprPath.node)) {
-                    remainingExprs.push(exprPath.node);
-                  } else {
-                    return;
-                  }
-                }
-                // Keep expressions that cannot be moved in the condition.
-                node.test =
-                  remainingExprs.length > 0
-                    ? t.sequenceExpression([...remainingExprs, lastExpr])
-                    : lastExpr;
-
-                // Add movable expressions to the beginning of the body
-                const prefixStmts = extractableExprs.map((expr) =>
-                  t.expressionStatement(expr),
-                );
-
-                if (t.isBlockStatement(node.body)) {
-                  node.body.body.unshift(...prefixStmts);
-                } else {
-                  const bodyStmt = node.body;
-                  if (t.isStatement(bodyStmt)) {
-                    node.body = t.blockStatement([...prefixStmts, bodyStmt]);
-                  }
-                }
-
-                // Add the same expressions after the loop
-                const suffixStmts = extractableExprs.map((expr) =>
-                  t.expressionStatement(t.cloneNode(expr)),
-                );
-                path.insertAfter(suffixStmts);
-                path.scope.crawl();
-              }
-            }
-          }
-        }
-
-        // Handle update with sequence expression.
-        // Original per iteration: B -> P... -> last.
-        // Transformed: B -> P...(end) -> remaining... -> last.
-        // Full moves preserve order; partial moves need P vs remaining
-        // independence. A `continue` in B would skip the trailing P while
-        // the original update still runs it, so skip on unnested continue.
-        const updatePath = path.get("update");
-        if (!Array.isArray(updatePath) && updatePath.isSequenceExpression()) {
-          const bodyPath = path.get("body");
-          if (!Array.isArray(bodyPath)) {
-            const doUpdate = !bodyMayAbrupt(bodyPath, path, {
-              breakLike: false,
-              continueLike: true,
-            });
-            if (doUpdate) {
-              const bodyScope = bodyPath.scope;
-              const exprPaths = updatePath.get("expressions");
-              const lastExprPath = exprPaths[exprPaths.length - 1];
-              const prefixExprPaths = exprPaths.slice(0, -1);
-              const prefixInfos = prefixExprPaths.map((exprPath) =>
-                getExprInfo(exprPath),
-              );
-
-              const remaining = new Set<number>();
-              for (let i = 0; i < prefixExprPaths.length; i++) {
-                if (isCaptured(prefixExprPaths[i], bodyScope)) {
-                  remaining.add(i);
-                }
-              }
-              let changed = true;
-              while (changed) {
-                changed = false;
-                const remainingInfos: {
-                  reads: Set<string>;
-                  writes: Set<string>;
-                  unknown: boolean;
-                }[] = [];
-                for (const i of remaining) {
-                  remainingInfos.push(prefixInfos[i]);
-                }
-                if (remainingInfos.length === 0) {
-                  break;
-                }
-                const combined = combineInfos(remainingInfos);
-                for (let i = 0; i < prefixExprPaths.length; i++) {
-                  if (
-                    !remaining.has(i) &&
-                    !independent(prefixInfos[i], combined)
-                  ) {
-                    remaining.add(i);
-                    changed = true;
-                  }
-                }
-              }
-
-              const extractablePaths: NodePath[] = [];
-              const remainingPaths: NodePath[] = [];
-              for (let i = 0; i < prefixExprPaths.length; i++) {
-                if (remaining.has(i)) {
-                  remainingPaths.push(prefixExprPaths[i]);
-                } else {
-                  extractablePaths.push(prefixExprPaths[i]);
-                }
-              }
-
-              if (extractablePaths.length > 0) {
-                const lastNode = lastExprPath.node;
-                if (!t.isExpression(lastNode)) {
-                  return;
-                }
-                const lastExpr = lastNode;
-                const extractableExprs: t.Expression[] = [];
-                const remainingExprs: t.Expression[] = [];
-                for (const exprPath of extractablePaths) {
-                  if (t.isExpression(exprPath.node)) {
-                    extractableExprs.push(exprPath.node);
-                  } else {
-                    return;
-                  }
-                }
-                for (const exprPath of remainingPaths) {
-                  if (t.isExpression(exprPath.node)) {
-                    remainingExprs.push(exprPath.node);
-                  } else {
-                    return;
-                  }
-                }
-                // Keep expressions that cannot be moved in the update clause.
-                node.update =
-                  remainingExprs.length > 0
-                    ? t.sequenceExpression([...remainingExprs, lastExpr])
-                    : lastExpr;
-
-                // Add movable expressions to the end of the body
-                const suffixStmts = extractableExprs.map((expr) =>
-                  t.expressionStatement(expr),
-                );
-
-                if (t.isBlockStatement(node.body)) {
-                  node.body.body.push(...suffixStmts);
-                } else {
-                  const bodyStmt = node.body;
-                  if (t.isStatement(bodyStmt)) {
-                    node.body = t.blockStatement([bodyStmt, ...suffixStmts]);
-                  }
-                }
-                path.scope.crawl();
-              }
-            }
-          }
-        }
+      ForStatement(path) {
+        hoistFromInit(path);
+        hoistFromTest(path);
+        hoistFromUpdate(path);
       },
     },
   };

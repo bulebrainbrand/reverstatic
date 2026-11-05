@@ -5,11 +5,81 @@ pluginTester({
   pluginName: "flat-for-seq",
   tests: [
     { code: `console.log("foo");`, output: `console.log("foo");` },
+    // init
     {
       code: `\
 for (a = b, c = d; i < 10; i++) {}`,
       output: `\
-for (a = b, c = d; i < 10; i++) {}`,
+a = b;
+c = d;
+for (; i < 10; i++) {}`,
+    },
+    {
+      code: `\
+for (foo(), bar(); i < 10; i++) {
+  baz();
+}`,
+      output: `\
+foo();
+bar();
+for (; i < 10; i++) {
+  baz();
+}`,
+    },
+    // init と test / update の組み合わせ
+    {
+      code: `\
+for (a = b, c = d; (e = f, g = h, i < 10); (j = k, i++)) {
+  b += i;
+}`,
+      output: `\
+a = b;
+c = d;
+for (; i < 10; i++) {
+  e = f;
+  g = h;
+  b += i;
+  j = k;
+}
+e = f;
+g = h;`,
+    },
+    // 単文位置ではブロックに包まれる
+    {
+      code: `\
+if (x) for (foo(), bar(); i < 10; i++) baz();`,
+      output: `\
+if (x) {
+  foo();
+  bar();
+  for (; i < 10; i++) baz();
+}`,
+    },
+    // ラベルの外側へ出る(init は元々ループ前に一度だけ実行される)
+    {
+      code: `\
+l: for (foo(), bar(); i < 10; i++) {
+  if (x) continue l;
+}`,
+      output: `\
+foo();
+bar();
+l: for (; i < 10; i++) {
+  if (x) continue l;
+}`,
+    },
+    // 複数宣言子は対象外
+    {
+      code: `\
+for (let i = 0, j = 0; i < 10; i++) {}`,
+      output: `\
+for (let i = 0, j = 0; i < 10; i++) {}`,
+    },
+    {
+      code: `\
+for (var i = 0, j = 0; i < 10; i++) {}`,
+      output: `\
+for (var i = 0, j = 0; i < 10; i++) {}`,
     },
     // condition
     // conditionの実行の問題で、末尾にstatementを置くべき
