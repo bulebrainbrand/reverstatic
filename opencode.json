@@ -17,7 +17,9 @@
       "echo *": "allow",
       "git status *": "allow",
       "git diff *": "allow",
-      "file *": "allow"
+      "file *": "allow",
+      "cat *": "allow",
+      "sort *": "allow"
     },
     "edit": {
       "*": "deny",
