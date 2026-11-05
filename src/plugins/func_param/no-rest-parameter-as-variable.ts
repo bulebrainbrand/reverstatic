@@ -6,7 +6,9 @@ import * as t from "@babel/types";
 //   -> function f(...r) { let a; a = 1; return a; }
 //
 // 方針:
-//  - r が値として漏れる / 動的キー / delete / メソッド呼び出し等があれば関数ごと諦める
+//  - r が値として漏れる / 動的キー / delete / タグ付きテンプレート等があれば関数ごと諦める
+//  - r[k]() は変数化する。this は r から undefined に変わるため、呼び出し先が this に
+//    依存しない前提で変換する (難読化解除用途)
 //  - 非数値キーは `let name;` に置換 (実引数には存在し得ないので初期値は常に undefined)
 //  - 非負整数キーは書込みがあるものだけ変換し、`let _0 = r[0];` と実引数を取り込む。
 //    これで「読取が書込みより先か」という実行順の解析が不要になる
@@ -142,13 +144,8 @@ const classify = (
   if (parent.isUnaryExpression({ operator: "delete" })) {
     return "unsupported";
   }
-  // r.f() は this === r で呼ばれる。変数化すると this が変わる
-  if (
-    (parent.isCallExpression() || parent.isOptionalCallExpression()) &&
-    parent.node.callee === node
-  ) {
-    return "unsupported";
-  }
+  // r.f() は this === r で呼ばれるが変数化する (this が変わる点は許容)。
+  // タグ付きテンプレートも同様に this が変わるため、こちらは対象外のまま。
   if (parent.isTaggedTemplateExpression({ tag: node })) {
     return "unsupported";
   }

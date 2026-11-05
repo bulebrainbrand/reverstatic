@@ -307,6 +307,58 @@ pluginTester({
   };
 }`,
     },
+    {
+      title: "メソッド呼び出しも変数化 (this は変わる)",
+      code: `function f(...r) {
+  r["a"] = function () {
+    return this;
+  };
+  return r["a"]();
+}`,
+      output: `function f(...r) {
+  let a;
+  a = function () {
+    return this;
+  };
+  return a();
+}`,
+    },
+    {
+      title: "クロージャ内のメソッド呼び出しも変数化",
+      code: `(function (...qC) {
+  qC["length"] = 0;
+  qC["a"] = new Av(128);
+  qC[1] = Tv["fromCodePoint"] || Tv.fromCharCode;
+  qC[2] = [];
+  return function () {
+    qC[2]["push"](qC["a"][0] || (qC["a"][0] = qC[1](0)));
+    return qC[2].join("");
+  };
+})()`,
+      output: `(function (...qC) {
+  let a, _1, _2;
+  qC["length"] = 0;
+  a = new Av(128);
+  _1 = Tv["fromCodePoint"] || Tv.fromCharCode;
+  _2 = [];
+  return function () {
+    _2["push"](a[0] || (a[0] = _1(0)));
+    return _2.join("");
+  };
+})();`,
+    },
+    {
+      title: "オプショナル呼び出しも変数化",
+      code: `function f(...r) {
+  r["a"] = g;
+  return r["a"]?.();
+}`,
+      output: `function f(...r) {
+  let a;
+  a = g;
+  return a?.();
+}`,
+    },
 
     // ===== 名前衝突 =====
     {
@@ -438,15 +490,6 @@ function f(...r) {
       "__defineGetter__",
       `function f(...r) {
   r["__defineGetter__"] = 1;
-}`,
-    ),
-    unchanged(
-      "メソッド呼び出し (this が変わる)",
-      `function f(...r) {
-  r["a"] = function () {
-    return this;
-  };
-  return r["a"]();
 }`,
     ),
     unchanged(
