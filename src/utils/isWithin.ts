@@ -13,3 +13,6 @@ export const isWithin = (path: NodePath, node: t.Node): boolean => {
   }
   return false;
 };
+
+export const isWithInPath = (path: NodePath, nodePath: NodePath) =>
+  isWithin(path, nodePath.node);

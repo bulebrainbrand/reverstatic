@@ -6,6 +6,7 @@ import {
   getEffects,
 } from "../../utils/getEffects";
 import { isVariableReference } from "../../utils/isVariableReference";
+import { isWithInPath } from "../../utils/isWithin";
 
 /**
  * for 文の test / update に詰め込まれたカンマ式を、可能なものだけ body 側へ移す。
@@ -52,9 +53,6 @@ function someReference(
   return hit;
 }
 
-const isWithin = (path: NodePath, container: NodePath): boolean =>
-  path === container || !!path.findParent((p) => p === container);
-
 // ---------------------------------------------------------------------------
 // 移動先で意味が変わらないか
 // ---------------------------------------------------------------------------
@@ -80,7 +78,7 @@ function capturedByBody(expr: NodePath, bodyScope: Scope | undefined): boolean {
       return false;
     }
     // 式の内側で宣言された変数(アロー関数の引数など)は式と一緒に動く
-    return !(ref && isWithin(ref.path, expr));
+    return !(ref && isWithInPath(ref.path, expr));
   });
 }
 
@@ -88,7 +86,7 @@ function capturedByBody(expr: NodePath, bodyScope: Scope | undefined): boolean {
 function usesLoopScopedBinding(expr: NodePath, loopScope: Scope): boolean {
   return someReference(expr, (id) => {
     const ref = id.scope.getBinding(id.node.name);
-    return !!ref && ref.scope === loopScope && !isWithin(ref.path, expr);
+    return !!ref && ref.scope === loopScope && !isWithInPath(ref.path, expr);
   });
 }
 
