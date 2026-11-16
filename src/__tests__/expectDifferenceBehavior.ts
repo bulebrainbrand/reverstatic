@@ -1,7 +1,18 @@
 // oxlint-disable no-eval
 import { transformSync, type InputOptions, type PluginItem } from "@babel/core";
 import { describe, expect, it } from "vite-plus/test";
-
+import vm from "node:vm";
+const evalCode = (code: string): unknown[] => {
+  let log: unknown[] = [];
+  vm.runInNewContext(code, {
+    console: {
+      log: (...obj: unknown[]) => {
+        log.push(obj);
+      },
+    },
+  });
+  return log;
+};
 export const expectDifferenceBehavior = ({
   plugin,
   pluginName,
@@ -33,27 +44,11 @@ export const expectDifferenceBehavior = ({
           configFile: false,
           babelrc: false,
         });
-        // console.logを差し替える
-        const original = console.log;
-        let log: unknown[] = [];
-        const mock = (...data: unknown[]) => {
-          log.push(data);
-        };
-
-        console.log = mock;
         eval(input);
-        console.log = original;
 
-        expect(log).toEqual(inputLog);
-
-        log = [];
+        expect(evalCode(input)).toEqual(inputLog);
         expect(outputCode?.code).toEqual(output);
-
-        console.log = mock;
-        eval(outputCode!.code!);
-        console.log = original;
-
-        expect(log).toEqual(outputLog);
+        expect(evalCode(output)).toEqual(outputLog);
       });
     }
   });
