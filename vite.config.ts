@@ -3,7 +3,7 @@ import { basename, join } from "node:path";
 import { defineConfig } from "vite-plus";
 import oxlintByethrowPlugin from "@praha/byethrow-oxlint";
 
-function collectPluginEntries(): Record<string, string> {
+function collectEntries(dir: string): Record<string, string> {
   const entries: Record<string, string> = {};
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
@@ -17,44 +17,54 @@ function collectPluginEntries(): Record<string, string> {
       const entryName = basename(name, ".ts");
       if (entries[entryName] !== undefined) {
         throw new Error(
-          `Duplicate plugin entry name: ${entryName} (${entries[entryName]} vs ${full})`,
+          `Duplicate entry name: ${entryName} (${entries[entryName]} vs ${full})`,
         );
       }
       entries[entryName] = full;
     }
   };
-  walk(join(process.cwd(), "src", "plugins"));
+  walk(dir);
   return entries;
 }
 
-const allPluginEntries = collectPluginEntries();
-
-const onlyPluginName = process.env.REVERSTATIC_PLUGIN;
-let pluginEntries: Record<string, string>;
-if (onlyPluginName === undefined) {
-  pluginEntries = allPluginEntries;
-} else {
-  const found = allPluginEntries[onlyPluginName];
-  if (found === undefined) {
-    throw new Error(`Unknown plugin: ${onlyPluginName}`);
+const allPluginEntries = collectEntries(join(process.cwd(), "src", "plugins"));
+const allPresetEntries = collectEntries(join(process.cwd(), "src", "presets"));
+const allEntries: Record<string, string> = { ...allPluginEntries };
+for (const [entryName, full] of Object.entries(allPresetEntries)) {
+  if (allEntries[entryName] !== undefined) {
+    throw new Error(
+      `Duplicate entry name across plugins and presets: ${entryName} (${allEntries[entryName]} vs ${full})`,
+    );
   }
-  pluginEntries = { [onlyPluginName]: found };
+  allEntries[entryName] = full;
+}
+
+const onlyEntryName = process.env.REVERSTATIC_ENTRY;
+let entries: Record<string, string>;
+if (onlyEntryName === undefined) {
+  entries = allEntries;
+} else {
+  const found = allEntries[onlyEntryName];
+  if (found === undefined) {
+    throw new Error(`Unknown entry: ${onlyEntryName}`);
+  }
+  entries = { [onlyEntryName]: found };
 }
 export default defineConfig({
   build: {
     outDir: "dist",
-    emptyOutDir: onlyPluginName === undefined,
+    emptyOutDir: onlyEntryName === undefined,
     sourcemap: false,
     minify: false,
     lib: {
-      entry: pluginEntries,
+      entry: entries,
       formats: ["es", "cjs"],
       fileName: (format, entryName) =>
         `${entryName}.${format === "cjs" ? "cjs" : "js"}`,
     },
     rollupOptions: {
       external: [/^@babel\//],
-      output: onlyPluginName === undefined ? {} : { codeSplitting: false },
+      output: onlyEntryName === undefined ? {} : { codeSplitting: false },
     },
   },
   lint: {
@@ -88,7 +98,7 @@ export default defineConfig({
       test: ["vp test --run  --passWithNoTests"],
       fmt: ["vp fmt"],
       build: [
-        "rm -rf dist && for f in $(find src/plugins -name '*.ts' ! -name '*.test.ts' ! -empty); do REVERSTATIC_PLUGIN=$(basename $f .ts) vp build; done",
+        "rm -rf dist && for f in $(find src/plugins src/presets -name '*.ts' ! -name '*.test.ts' ! -empty); do REVERSTATIC_ENTRY=$(basename $f .ts) vp build; done",
       ],
       check: ["vpr lint", "vpr test"],
     },
