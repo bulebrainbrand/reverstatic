@@ -1,7 +1,7 @@
 import { Result } from "@praha/byethrow";
 import * as t from "@babel/types";
 import type { NodePath } from "@babel/core";
-import { isActualUndefined } from "./isActualUndefined";
+import { isActualUndefined } from "./isActualLiteral";
 export type IsTurhyError =
   | "can't judge identifier"
   | "unexpected node"

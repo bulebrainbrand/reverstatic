@@ -2,7 +2,7 @@ import { traverse } from "@babel/core";
 import * as t from "@babel/types";
 import { Result } from "@praha/byethrow";
 import { describe, expect, it } from "vite-plus/test";
-import { isActualUndefined } from "./isActualUndefined";
+import { isActualUndefined } from "./isActualLiteral";
 
 type IsActualUndefinedResult = ReturnType<typeof isActualUndefined>;
 

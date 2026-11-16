@@ -1,5 +1,5 @@
 import type { NodePath } from "@babel/core";
-import { isActualUndefined } from "./isActualUndefined";
+import { isActualUndefined } from "./isActualLiteral";
 import { Result } from "@praha/byethrow";
 
 export const isNoSideEffect = (node: NodePath) => {
