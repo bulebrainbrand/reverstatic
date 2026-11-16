@@ -1,4 +1,4 @@
-import { expectDifferenceBehavior } from "#tests/expectDifferenceBehavior.ts";
+import { expectDifferenceBehavior } from "#tests/expectBehavior.ts";
 
 import noRestParameterAsVariable from "./no-rest-parameter-as-variable";
 

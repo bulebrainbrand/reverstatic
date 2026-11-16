@@ -51,3 +51,34 @@ export const expectDifferenceBehavior = ({
     }
   });
 };
+
+export const expectSameBehavior = ({
+  plugin,
+  pluginName,
+  tests,
+}: {
+  tests: ({
+    input: string;
+    log: unknown[];
+    output: string;
+    title?: string;
+  } & InputOptions)[];
+  plugin: PluginItem;
+  pluginName: string;
+}) => {
+  describe(pluginName, () => {
+    for (const { input, log, output, title, ...options } of tests) {
+      it(title ?? pluginName, () => {
+        const outputCode = transformSync(input, {
+          plugins: [plugin],
+          ...options,
+          configFile: false,
+          babelrc: false,
+        });
+        expect(evalCode(input)).toEqual(log);
+        expect(outputCode?.code).toEqual(output);
+        expect(evalCode(output)).toEqual(log);
+      });
+    }
+  });
+};
