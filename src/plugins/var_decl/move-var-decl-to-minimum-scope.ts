@@ -6,6 +6,7 @@ import { getConstantExpression } from "../../utils/getConstantExpression";
 import { getEffects } from "../../utils/getEffects";
 import { hasDynamicScope } from "../../utils/hasDynamicScope";
 import { isWithin } from "../../utils/isWithin";
+import { isExportedUse } from "../../utils/isExportedUse";
 
 // 変数宣言を、その変数の全使用箇所を含む最小のブロックへ移す。
 //   function f() {
@@ -55,14 +56,6 @@ type PluginState = PluginPass & {
   plans?: Plan[];
   insertions?: Map<t.BlockStatement, Insertion>;
 };
-
-const isExportedUse = (path: NodePath): boolean =>
-  path.findParent(
-    (parent) =>
-      parent.isExportSpecifier() ||
-      parent.isExportNamedDeclaration() ||
-      parent.isExportDefaultDeclaration(),
-  ) !== null;
 
 /** すべての path を内側に含む最も深い path。 */
 const commonAncestor = (paths: NodePath[]): NodePath | undefined => {
