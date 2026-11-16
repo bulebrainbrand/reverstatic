@@ -36,11 +36,5 @@ expectSameBehavior({
       log: [[0], [1], [2]],
       output: `function f() {\n  for (let i = 0; i < 3; i++) {\n    var x = 0;\n    x = i;\n    console.log(x);\n  }\n}\nf();`,
     },
-    {
-      title: "読み取り専用の const はクロージャがあっても同じ挙動",
-      input: `function f() {\n  const x = 10;\n  const fs = [];\n  for (let i = 0; i < 2; i++) {\n    fs.push(() => x + i);\n  }\n  return [fs[0](), fs[1]()];\n}\nconsole.log(f());`,
-      log: [[[10, 11]]],
-      output: `function f() {\n  const fs = [];\n  for (let i = 0; i < 2; i++) {\n    const x = 10;\n    fs.push(() => x + i);\n  }\n  return [fs[0](), fs[1]()];\n}\nconsole.log(f());`,
-    },
   ],
 });

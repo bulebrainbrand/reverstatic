@@ -53,24 +53,14 @@ pluginTester({
       output: `function f() {\n  if (cond) {\n    let x = 1;\n    return () => x;\n  }\n}`,
     },
     {
-      title: "初期化子なし var はループ内へ移動できる",
+      title: "書き込みのある初期化子なし var はループ内へ移動できる",
       code: `function f(ys) {\n  var x;\n  for (const y of ys) {\n    x = y;\n    console.log(x);\n  }\n}`,
       output: `function f(ys) {\n  for (const y of ys) {\n    var x;\n    x = y;\n    console.log(x);\n  }\n}`,
     },
     {
-      title: "読み取り専用の let はループ内へ移動できる",
-      code: `function f(ys) {\n  let x = 1;\n  for (const y of ys) {\n    console.log(x);\n  }\n}`,
-      output: `function f(ys) {\n  for (const y of ys) {\n    let x = 1;\n    console.log(x);\n  }\n}`,
-    },
-    {
-      title: "初期化子なし let はループ内へ移動できる",
+      title: "書き込みのある初期化子なし let はループ内へ移動できる",
       code: `function f(ys) {\n  let x;\n  for (const y of ys) {\n    x = y;\n    console.log(x);\n  }\n}`,
       output: `function f(ys) {\n  for (const y of ys) {\n    let x;\n    x = y;\n    console.log(x);\n  }\n}`,
-    },
-    {
-      title: "読み取り専用の var はループ内へ移動できる",
-      code: `function f(ys) {\n  var x = 1;\n  for (const y of ys) {\n    console.log(x);\n  }\n}`,
-      output: `function f(ys) {\n  for (const y of ys) {\n    var x = 1;\n    console.log(x);\n  }\n}`,
     },
     {
       title: "最初が書き込みの let はループ内へ移動できる",
@@ -88,19 +78,14 @@ pluginTester({
       output: `function f(c) {\n  for (let i = 0; i < 3; i++) {\n    if (c) {\n      let x = 0;\n      x = i;\n      console.log(x);\n    }\n  }\n}`,
     },
     {
-      title: "読み取り専用の const はクロージャがあってもループ内へ移動できる",
-      code: `function f() {\n  const x = 1;\n  const fs = [];\n  for (let i = 0; i < 2; i++) {\n    fs.push(() => x);\n  }\n  return fs;\n}`,
-      output: `function f() {\n  const fs = [];\n  for (let i = 0; i < 2; i++) {\n    const x = 1;\n    fs.push(() => x);\n  }\n  return fs;\n}`,
-    },
-    {
-      title: "複数の宣言子をループ内で個別に判定",
+      title: "ループ内で書き込まれる宣言子だけを移動",
       code: `function f() {\n  let a = 0, b = 1;\n  for (let i = 0; i < 2; i++) {\n    a = i;\n    console.log(a, b);\n  }\n}`,
-      output: `function f() {\n  for (let i = 0; i < 2; i++) {\n    let a = 0,\n      b = 1;\n    a = i;\n    console.log(a, b);\n  }\n}`,
+      output: `function f() {\n  let b = 1;\n  for (let i = 0; i < 2; i++) {\n    let a = 0;\n    a = i;\n    console.log(a, b);\n  }\n}`,
     },
     {
-      title: "符号付きリテラルはループ内へ移動できる",
-      code: `function f(ys) {\n  let x = -1;\n  for (const y of ys) {\n    console.log(x + y);\n  }\n}`,
-      output: `function f(ys) {\n  for (const y of ys) {\n    let x = -1;\n    console.log(x + y);\n  }\n}`,
+      title: "符号付きリテラルの初期化子は書き込みがあればループ内へ移動できる",
+      code: `function f() {\n  let x = -1;\n  for (let i = 0; i < 3; i++) {\n    x = i;\n    console.log(x);\n  }\n}`,
+      output: `function f() {\n  for (let i = 0; i < 3; i++) {\n    let x = -1;\n    x = i;\n    console.log(x);\n  }\n}`,
     },
     {
       title: "初期化子なし let を裸のブロックへ移動",
@@ -185,6 +170,26 @@ pluginTester({
     unchanged(
       "配列の初期化子はループ内へ移動しない",
       `function f() {\n  let x = [];\n  for (let i = 0; i < 2; i++) {\n    x = [i];\n    console.log(x);\n  }\n}`,
+    ),
+    unchanged(
+      "読み取り専用の let はループ内へ移動しない",
+      `function f(ys) {\n  let x = 1;\n  for (const y of ys) {\n    console.log(x);\n  }\n}`,
+    ),
+    unchanged(
+      "読み取り専用の const はループ内へ移動しない",
+      `function f() {\n  const x = 1;\n  const fs = [];\n  for (let i = 0; i < 2; i++) {\n    fs.push(() => x);\n  }\n  return fs;\n}`,
+    ),
+    unchanged(
+      "読み取り専用の var はループ内へ移動しない",
+      `function f(ys) {\n  var x = 1;\n  for (const y of ys) {\n    console.log(x);\n  }\n}`,
+    ),
+    unchanged(
+      "読み取り専用の初期化子なし var はループ内へ移動しない",
+      `function f(ys) {\n  var x;\n  for (const y of ys) {\n    console.log(x);\n  }\n}`,
+    ),
+    unchanged(
+      "読み取り専用の初期化子なし let はループ内へ移動しない",
+      `function f(ys) {\n  let x;\n  for (const y of ys) {\n    console.log(x);\n  }\n}`,
     ),
     unchanged(
       "ネストした関数の本体へは移動しない",
