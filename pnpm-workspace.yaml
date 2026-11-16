@@ -3,14 +3,14 @@ packages:
 allowBuilds:
   core-js: true
 catalog:
-  "@babel/core": ^8.0.1
-  "@babel/generator": ^8.0.0
+  "@babel/core": ^8.1.2
+  "@babel/generator": ^8.1.2
   "@babel/traverse": ^8.1.2
-  "@babel/types": ^8.0.4
+  "@babel/types": ^8.1.2
   "@praha/byethrow": ^0.12.0
   "@praha/byethrow-oxlint": ^0.12.0
   "@types/node": ^26.6.2
   "@vitest/coverage-v8": 4.1.11
   babel-plugin-tester: ^12.0.0
-  vite-plus: ^0.3.0
+  vite-plus: ^1.6.0
 catalogMode: strict
