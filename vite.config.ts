@@ -66,7 +66,7 @@ export default defineConfig({
       "typescript/no-unsafe-type-assertion": "error",
       "unicorn/no-empty-file": "off",
     },
-    ignorePatterns: ["./target/**/*", "./dist/**/*"],
+    ignorePatterns: ["*.target.js"],
   },
   fmt: {
     endOfLine: "lf",
