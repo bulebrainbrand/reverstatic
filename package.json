@@ -1,5 +1,8 @@
 {
   "type": "module",
+  "imports": {
+    "#tests/*": "./src/__tests__/*"
+  },
   "dependencies": {
     "@babel/core": "catalog:",
     "@babel/generator": "catalog:",
