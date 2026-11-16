@@ -44,8 +44,6 @@ export const expectDifferenceBehavior = ({
           configFile: false,
           babelrc: false,
         });
-        eval(input);
-
         expect(evalCode(input)).toEqual(inputLog);
         expect(outputCode?.code).toEqual(output);
         expect(evalCode(output)).toEqual(outputLog);
