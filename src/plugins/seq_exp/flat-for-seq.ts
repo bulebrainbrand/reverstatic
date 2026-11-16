@@ -1,5 +1,11 @@
 import type { NodePath, PluginObject, PluginPass } from "@babel/core";
 import * as t from "@babel/types";
+import {
+  areIndependent,
+  type Effects,
+  getEffects,
+} from "../../utils/getEffects";
+import { isVariableReference } from "../../utils/isVariableReference";
 
 /**
  * for 文の test / update に詰め込まれたカンマ式を、可能なものだけ body 側へ移す。
@@ -16,49 +22,9 @@ import * as t from "@babel/types";
 type Scope = NodePath["scope"];
 type ForPath = NodePath<t.ForStatement>;
 
-/** 式が読む変数名・書く変数名と、副作用を追えない(= 順序を変えられない)かどうか */
-interface Effects {
-  reads: Set<string>;
-  writes: Set<string>;
-  unknown: boolean;
-}
-
 // ---------------------------------------------------------------------------
 // 識別子の判定
 // ---------------------------------------------------------------------------
-
-/**
- * 変数を指す識別子か。
- * isReferencedIdentifier() は代入の左辺を除外してしまうため、
- * プロパティ名・ラベルなど「明らかに変数ではない位置」だけを除外する方式にしている。
- */
-function isVariableReference(path: NodePath<t.Identifier>): boolean {
-  const { node, parent } = path;
-
-  if (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) {
-    return !(parent.property === node && !parent.computed);
-  }
-  if (t.isObjectProperty(parent)) {
-    return !(parent.key === node && !parent.computed && parent.value !== node);
-  }
-  if (
-    t.isObjectMethod(parent) ||
-    t.isClassMethod(parent) ||
-    t.isClassProperty(parent)
-  ) {
-    return !(parent.key === node && !parent.computed);
-  }
-  if (t.isLabeledStatement(parent)) {
-    return parent.label !== node;
-  }
-  if (t.isBreakStatement(parent) || t.isContinueStatement(parent)) {
-    return parent.label !== node;
-  }
-  if (t.isPrivateName(parent) || t.isMetaProperty(parent)) {
-    return false;
-  }
-  return true;
-}
 
 /** root 以下に、pred を満たす「変数を指す識別子」があるか(root 自身も調べる) */
 function someReference(
@@ -88,82 +54,6 @@ function someReference(
 
 const isWithin = (path: NodePath, container: NodePath): boolean =>
   path === container || !!path.findParent((p) => p === container);
-
-// ---------------------------------------------------------------------------
-// 副作用の要約と独立性
-// ---------------------------------------------------------------------------
-
-/** 評価すると何が起きるか追えない式。含んでいたら順序を変えない */
-const OPAQUE_NODE_TYPES = new Set([
-  "CallExpression",
-  "OptionalCallExpression",
-  "NewExpression",
-  "TaggedTemplateExpression",
-  "ImportExpression",
-  "YieldExpression",
-  "AwaitExpression",
-  "ClassExpression",
-]);
-
-function analyze(root: NodePath): Effects {
-  const fx: Effects = { reads: new Set(), writes: new Set(), unknown: false };
-
-  const visit = (path: NodePath): void => {
-    const { node, parent } = path;
-    if (OPAQUE_NODE_TYPES.has(node.type)) {
-      fx.unknown = true;
-    } else if (t.isAssignmentExpression(node)) {
-      // 識別子以外(メンバー・分割代入)への代入は影響範囲が読めない
-      if (!t.isIdentifier(node.left)) {
-        fx.unknown = true;
-      }
-    } else if (t.isUpdateExpression(node)) {
-      if (!t.isIdentifier(node.argument)) {
-        fx.unknown = true;
-      }
-    } else if (t.isUnaryExpression(node, { operator: "delete" })) {
-      fx.unknown = true;
-    } else if (
-      t.isIdentifier(node) &&
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-      isVariableReference(path as NodePath<t.Identifier>)
-    ) {
-      if (t.isAssignmentExpression(parent) && parent.left === node) {
-        fx.writes.add(node.name);
-        if (parent.operator !== "=") {
-          fx.reads.add(node.name); // 複合代入は読んでから書く
-        }
-      } else if (t.isUpdateExpression(parent)) {
-        fx.reads.add(node.name);
-        fx.writes.add(node.name);
-      } else {
-        fx.reads.add(node.name);
-      }
-    }
-  };
-
-  visit(root); // traverse は root 自身を訪れないので別に呼ぶ
-  root.traverse({ enter: visit });
-  return fx;
-}
-
-/** a と b を入れ替えても結果が変わらないか */
-function independent(a: Effects, b: Effects): boolean {
-  if (a.unknown || b.unknown) {
-    return false;
-  }
-  for (const w of a.writes) {
-    if (b.reads.has(w) || b.writes.has(w)) {
-      return false;
-    }
-  }
-  for (const w of b.writes) {
-    if (a.reads.has(w)) {
-      return false;
-    }
-  }
-  return true;
-}
 
 // ---------------------------------------------------------------------------
 // 移動先で意味が変わらないか
@@ -309,7 +199,8 @@ function chooseKept(
   const keptSoFar: number[] = [];
   for (const i of order) {
     kept[i] =
-      pinned[i] || keptSoFar.some((j) => !independent(effects[i], effects[j]));
+      pinned[i] ||
+      keptSoFar.some((j) => !areIndependent(effects[i], effects[j]));
     if (kept[i]) {
       keptSoFar.push(i);
     }
@@ -400,13 +291,13 @@ function hoistFromTest(loop: ForPath): void {
 
   const { prefix, last } = splitSequence(test);
   const bodyScope = bodyBlockScope(loop.get("body"));
-  const lastEffects = analyze(last);
-  const effects = prefix.map(analyze);
+  const lastEffects = getEffects(last);
+  const effects = prefix.map((expr) => getEffects(expr));
   const pinned = prefix.map(
     (expr, i) =>
       capturedByBody(expr, bodyScope) ||
       usesLoopScopedBinding(expr, loop.scope) ||
-      !independent(effects[i], lastEffects), // C と順序が入れ替わる
+      !areIndependent(effects[i], lastEffects), // C と順序が入れ替わる
   );
   const { moved, remaining } = rebuild(
     prefix,
@@ -444,7 +335,7 @@ function hoistFromUpdate(loop: ForPath): void {
 
   const { prefix, last } = splitSequence(update);
   const bodyScope = bodyBlockScope(loop.get("body"));
-  const effects = prefix.map(analyze);
+  const effects = prefix.map((expr) => getEffects(expr));
   const pinned = prefix.map((expr) => capturedByBody(expr, bodyScope));
   const { moved, remaining } = rebuild(
     prefix,
