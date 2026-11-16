@@ -3,18 +3,9 @@ import * as t from "@babel/types";
 import { Result } from "@praha/byethrow";
 import { getConstantExpression } from "../../utils/getConstantExpression";
 import { hasDynamicScope } from "../../utils/hasDynamicScope";
+import { isAfter } from "../../utils/isAfter";
 
 type PluginState = PluginPass & { hasDynamicScope?: boolean };
-
-const isAfterDeclaration = (
-  usePath: NodePath,
-  declaratorPath: NodePath<t.VariableDeclarator>,
-): boolean => {
-  const start = usePath.node.start;
-  const end = declaratorPath.node.end;
-  if (typeof start !== "number" || typeof end !== "number") return false;
-  return start >= end;
-};
 
 const isInitializationGuaranteed = (
   declaratorPath: NodePath<t.VariableDeclarator>,
@@ -61,7 +52,7 @@ const resolveConstant = (
   const declaratorNode = declaratorPath.node;
   if (!t.isIdentifier(declaratorNode.id, { name })) return undefined;
   if (!isInitializationGuaranteed(declaratorPath)) return undefined;
-  if (!isAfterDeclaration(path, declaratorPath)) return undefined;
+  if (!isAfter(declaratorPath, path)) return undefined;
   if (seen.has(declaratorNode)) return undefined;
 
   const initPath = declaratorPath.get("init");
@@ -161,7 +152,7 @@ export default function (): PluginObject<PluginState> {
           if (!isInitializationGuaranteed(path)) return;
           for (const reference of references) {
             if (!canReplaceReference(reference)) return;
-            if (!isAfterDeclaration(reference, path)) return;
+            if (!isAfter(path, reference)) return;
           }
         }
 

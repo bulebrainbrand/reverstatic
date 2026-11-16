@@ -7,6 +7,7 @@ import { getEffects } from "../../utils/getEffects";
 import { hasDynamicScope } from "../../utils/hasDynamicScope";
 import { isWithin } from "../../utils/isWithin";
 import { isExportedUse } from "../../utils/isExportedUse";
+import { isAfter } from "../../utils/isAfter";
 
 // 変数宣言を、その変数の全使用箇所を含む最小のブロックへ移す。
 //   function f() {
@@ -93,19 +94,6 @@ const nearestBlock = (
 /** path が ancestor 自身ではなく、その子孫か。 */
 const isStrictDescendant = (path: NodePath, ancestor: NodePath): boolean =>
   path.node !== ancestor.node && isWithin(path, ancestor.node);
-
-/** 宣言より後にあるか。制御構造の内側へ降りるだけなので、位置の比較で足りる。 */
-const isAfterDeclaration = (
-  declaration: NodePath,
-  target: NodePath,
-): boolean => {
-  const end = declaration.node.end;
-  const start = target.node.start;
-  if (typeof end !== "number" || typeof start !== "number") {
-    return false;
-  }
-  return start >= end;
-};
 
 /** 移動先までに関数・クラス・静的ブロックの境界を越えるか。 */
 const crossesScopeBoundary = (
@@ -315,7 +303,7 @@ const findTarget = (
   if (!isStrictDescendant(target, sourceList)) {
     return undefined;
   }
-  if (!isAfterDeclaration(declaration, target)) {
+  if (!isAfter(declaration, target)) {
     return undefined;
   }
   if (crossesScopeBoundary(target, sourceList)) {
