@@ -106,10 +106,7 @@ export default function (): PluginObject<PluginPass> {
           if (elementNode == null) return;
           if (t.isSpreadElement(elementNode)) return;
 
-          targets.push({
-            memberPath: parentPath as NodePath<t.MemberExpression>,
-            elementNode: elementNode as t.Expression,
-          });
+          targets.push({ memberPath: parentPath, elementNode: elementNode });
         }
 
         for (const { memberPath, elementNode } of targets) {
