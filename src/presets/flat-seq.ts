@@ -1,4 +1,4 @@
-import type { PluginObject, PluginPass, PresetObject } from "@babel/core";
+import type { PresetObject } from "@babel/core";
 import flatDoWhileSeq from "../plugins/seq_exp/flat-do-while-seq";
 import flatForInForOfSeq from "../plugins/seq_exp/flat-for-in-for-of-seq";
 import flatIfSeq from "../plugins/seq_exp/flat-if-seq";
