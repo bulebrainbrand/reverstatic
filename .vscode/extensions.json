@@ -1,5 +1,1 @@
-{
-    "unwantedRecommendations": [
-        "esbenp.prettier-vscode"
-    ]
-}
+{ "unwantedRecommendations": ["esbenp.prettier-vscode"] }
