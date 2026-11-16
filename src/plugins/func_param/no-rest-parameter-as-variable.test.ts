@@ -19,14 +19,15 @@ pluginTester({
   r["a"] = 1;
   return r["a"];
 }`,
-      output: `function f(...r) {
+      output: `function f() {
   let a;
   a = 1;
   return a;
 }`,
     },
     {
-      title: "数値キーは実引数を取り込む / 書込みのない r[0] はそのまま",
+      title:
+        "書込みが先の数値キーは引数として読まず、読取だけの r[0] を仮引数化",
       code: `function f(...r) {
   r["a"] = "x";
   r[246] = "" + (r[0] || "");
@@ -36,14 +37,10 @@ pluginTester({
   }
   return r[246];
 }`,
-      output: `function f(...r) {
-  let a,
-    _246 = r[246],
-    c,
-    h,
-    i;
+      output: `function f(_0) {
+  let a, _246, c, h, i;
   a = "x";
-  _246 = "" + (r[0] || "");
+  _246 = "" + (_0 || "");
   c = _246.length;
   for (h = 0; h < c; h++) {
     i = a.indexOf(_246[h]);
@@ -57,8 +54,7 @@ pluginTester({
   if (c) r[0] = 1;
   return r[0];
 }`,
-      output: `function f(...r) {
-  let _0 = r[0];
+      output: `function f(_0) {
   if (c) _0 = 1;
   return _0;
 }`,
@@ -70,22 +66,21 @@ pluginTester({
   r[0] = 1;
   return r[0];
 }`,
-      output: `function f(...r) {
-  let _0 = r[0];
+      output: `function f(_0) {
   console.log(_0);
   _0 = 1;
   return _0;
 }`,
     },
     {
-      title: "書込みのない数値キーの読取は実引数なので残す",
+      title: "書込みのない数値キーの読取も仮引数化する",
       code: `function f(...r) {
   r["a"] = r[0];
   return r["a"];
 }`,
-      output: `function f(...r) {
+      output: `function f(_0) {
   let a;
-  a = r[0];
+  a = _0;
   return a;
 }`,
     },
@@ -96,7 +91,7 @@ pluginTester({
   r["a"] += 2;
   return r.a;
 };`,
-      output: `const f = (...r) => {
+      output: `const f = () => {
   let a;
   a = 1;
   a += 2;
@@ -129,7 +124,7 @@ pluginTester({
   r["a"] = 1;
   return r[-79];
 }`,
-      output: `function f(...r) {
+      output: `function f() {
   let a, _neg79;
   a = 1;
   return _neg79;
@@ -141,7 +136,7 @@ pluginTester({
   r["x"] = a;
   return r["x"];
 }`,
-      output: `function f(a, ...r) {
+      output: `function f(a) {
   let x;
   x = a;
   return x;
@@ -162,16 +157,14 @@ pluginTester({
 }`,
     },
     {
-      title:
-        "先頭の r.length = N は切詰め済みとして数値キーも変換 (N 以上は初期値なし)",
+      title: "先頭の切詰め後は書込みが先の数値キーだけで rest を削除",
       code: `function f(...r) {
   r["length"] = 1;
   r[246] = 1;
   return r[246];
 }`,
-      output: `function f(...r) {
+      output: `function f() {
   let _246;
-  r["length"] = 1;
   _246 = 1;
   return _246;
 }`,
@@ -194,7 +187,7 @@ pluginTester({
 }`,
     },
     {
-      title: "先頭の length 書込みが複数なら最小値で切詰め",
+      title: "先頭の length 書込みが複数でも書込みだけの数値キーは rest を削除",
       code: `function f(...r) {
   r.length = 5;
   r.length = 2;
@@ -202,11 +195,8 @@ pluginTester({
   r[1] = 1;
   return r[3] + r[1];
 }`,
-      output: `function f(...r) {
-  let _3,
-    _1 = r[1];
-  r.length = 5;
-  r.length = 2;
+      output: `function f() {
+  let _3, _1;
   _3 = 1;
   _1 = 1;
   return _3 + _1;
@@ -230,7 +220,7 @@ pluginTester({
   r["a"] = 1;
   return { k: r["a"] };
 }`,
-      output: `function f(...r) {
+      output: `function f() {
   let a;
   a = 1;
   return {
@@ -245,7 +235,7 @@ pluginTester({
   ({ k: r["b"] } = { k: 2 });
   return r["a"] + r["b"];
 }`,
-      output: `function f(...r) {
+      output: `function f() {
   let a, b;
   [a] = [1];
   ({ k: b } = {
@@ -260,7 +250,7 @@ pluginTester({
   for (r["a"] of [1, 2]) {}
   return r["a"];
 }`,
-      output: `function f(...r) {
+      output: `function f() {
   let a;
   for (a of [1, 2]) {
   }
@@ -273,7 +263,7 @@ pluginTester({
   r["a"] = 1;
   return () => r["a"];
 }`,
-      output: `function f(...r) {
+      output: `function f() {
   let a;
   a = 1;
   return () => a;
@@ -282,7 +272,7 @@ pluginTester({
     {
       title: "式なしテンプレートリテラルのキー",
       code: 'function f(...r) {\n  r[`a`] = 1;\n  return r["a"];\n}',
-      output: `function f(...r) {
+      output: `function f() {
   let a;
   a = 1;
   return a;
@@ -297,10 +287,10 @@ pluginTester({
     return q["a"] + r["a"];
   };
 }`,
-      output: `function f(...r) {
+      output: `function f() {
   let a;
   a = 1;
-  return function g(...q) {
+  return function g() {
     let _a;
     _a = 2;
     return _a + a;
@@ -315,7 +305,7 @@ pluginTester({
   };
   return r["a"]();
 }`,
-      output: `function f(...r) {
+      output: `function f() {
   let a;
   a = function () {
     return this;
@@ -335,9 +325,8 @@ pluginTester({
     return qC[2].join("");
   };
 })()`,
-      output: `(function (...qC) {
+      output: `(function () {
   let a, _1, _2;
-  qC["length"] = 0;
   a = new Av(128);
   _1 = Tv["fromCodePoint"] || Tv.fromCharCode;
   _2 = [];
@@ -353,10 +342,183 @@ pluginTester({
   r["a"] = g;
   return r["a"]?.();
 }`,
-      output: `function f(...r) {
+      output: `function f() {
   let a;
   a = g;
   return a?.();
+}`,
+    },
+
+    {
+      title: "数値キーの読取のみでも仮引数化する",
+      code: `function f(...r) {
+  return r[0];
+}`,
+      output: `function f(_0) {
+  return _0;
+}`,
+    },
+    {
+      title: "書込みだけの数値キーは既存引数の後ろでも仮引数にしない",
+      code: `function f(a, ...r) {
+  r[0] = a;
+  r[1] = r[0] + 1;
+  return r[1];
+}`,
+      output: `function f(a) {
+  let _0, _1;
+  _0 = a;
+  _1 = _0 + 1;
+  return _1;
+}`,
+    },
+    {
+      title: "既存の通常引数の後ろに読取のみの数値キー仮引数を追加",
+      code: `function f(a, ...r) {
+  return a + r[0] + r[1];
+}`,
+      output: `function f(a, _0, _1) {
+  return a + _0 + _1;
+}`,
+    },
+    {
+      title: "先頭の length 切詰めと連続した数値キー",
+      code: `function f(...r) {
+  r.length = 1;
+  r[0] = r[0] + 1;
+  return r[0];
+}`,
+      output: `function f(_0) {
+  _0 = _0 + 1;
+  return _0;
+}`,
+    },
+    {
+      title: "先頭の length 切詰めが複数あってもすべて削除",
+      code: `function f(...r) {
+  r.length = 5;
+  r.length = 1;
+  r[0] = r[0] + 1;
+  return r[0];
+}`,
+      output: `function f(_0) {
+  _0 = _0 + 1;
+  return _0;
+}`,
+    },
+    {
+      title: "length = 0 で切詰めた数値キーは初期値なしの let",
+      code: `function f(...r) {
+  r.length = 0;
+  r[0] = 1;
+  return r[0];
+}`,
+      output: `function f() {
+  let _0;
+  _0 = 1;
+  return _0;
+}`,
+    },
+    {
+      title: "cut 以上の数値キーは仮引数にせず初期値なしの let",
+      code: `function f(...r) {
+  r.length = 1;
+  r[0] = r[0] + 1;
+  r[1] = 2;
+  return r[0] + r[1];
+}`,
+      output: `function f(_0) {
+  let _1;
+  _0 = _0 + 1;
+  _1 = 2;
+  return _0 + _1;
+}`,
+    },
+    {
+      title: "先頭の length 切詰めは非数値キーだけでも削除",
+      code: `function f(...r) {
+  r.length = 0;
+  r["a"] = 1;
+  return r["a"];
+}`,
+      output: `function f() {
+  let a;
+  a = 1;
+  return a;
+}`,
+    },
+    {
+      title: "書込みだけの穴あき数値キーは通常引数化せず rest を削除",
+      code: `function f(...r) {
+  r[0] = 1;
+  r[2] = 3;
+  return r[0] + r[2];
+}`,
+      output: `function f() {
+  let _0, _2;
+  _0 = 1;
+  _2 = 3;
+  return _0 + _2;
+}`,
+    },
+    {
+      title: "穴あきの読取は実引数のまま残し、書込みだけのキーは初期化しない",
+      code: `function f(...r) {
+  r[0] = 1;
+  return r[2];
+}`,
+      output: `function f(...r) {
+  let _0;
+  _0 = 1;
+  return r[2];
+}`,
+    },
+    {
+      title: "書込みだけの大きい数値キーがあっても読取キーは仮引数化",
+      code: `function f(...r) {
+  r[5] = 1;
+  return r[0] + r[5];
+}`,
+      output: `function f(_0) {
+  let _5;
+  _5 = 1;
+  return _0 + _5;
+}`,
+    },
+    {
+      title: "for-of の数値キー書込みも安全に仮引数化",
+      code: `function f(...r) {
+  for (r[0] of [1]) {}
+  return r[0];
+}`,
+      output: `function f(_0) {
+  for (_0 of [1]) {
+  }
+  return _0;
+}`,
+    },
+    {
+      title: "同一文内で読む数値キーは引数が必要なまま",
+      code: `function f(...r) {
+  r[1] = r[1] + 1;
+  return r[1];
+}`,
+      output: `function f(...r) {
+  let _1 = r[1];
+  _1 = _1 + 1;
+  return _1;
+}`,
+    },
+    {
+      title: "既存引数と名前が衝突したらリネーム",
+      code: `function f(a, ...r) {
+  r["a"] = 1;
+  return r["a"];
+}`,
+      output: `function f(a) {
+  let _a;
+  _a = 1;
+  return _a;
 }`,
     },
 
@@ -369,7 +531,7 @@ function f(...r) {
   return r["a"] + a;
 }`,
       output: `var a = 0;
-function f(...r) {
+function f() {
   let _a;
   _a = 1;
   return _a + a;
@@ -384,7 +546,7 @@ function f(...r) {
     return a;
   }
 }`,
-      output: `function f(...r) {
+      output: `function f() {
   let _a;
   function g() {
     let a = 1;
@@ -423,9 +585,15 @@ function f(...r) {
 }`,
     ),
     unchanged(
-      "書込みなし (純粋な参照のみ)",
+      "非数値キーの読取のみ",
       `function f(...r) {
-  return r[0];
+  return r["a"];
+}`,
+    ),
+    unchanged(
+      "穴あきの数値キー読取のみ",
+      `function f(...r) {
+  return r[2];
 }`,
     ),
     unchanged(
