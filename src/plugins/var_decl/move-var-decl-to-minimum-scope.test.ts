@@ -58,6 +58,51 @@ pluginTester({
       output: `function f(ys) {\n  for (const y of ys) {\n    var x;\n    x = y;\n    console.log(x);\n  }\n}`,
     },
     {
+      title: "読み取り専用の let はループ内へ移動できる",
+      code: `function f(ys) {\n  let x = 1;\n  for (const y of ys) {\n    console.log(x);\n  }\n}`,
+      output: `function f(ys) {\n  for (const y of ys) {\n    let x = 1;\n    console.log(x);\n  }\n}`,
+    },
+    {
+      title: "初期化子なし let はループ内へ移動できる",
+      code: `function f(ys) {\n  let x;\n  for (const y of ys) {\n    x = y;\n    console.log(x);\n  }\n}`,
+      output: `function f(ys) {\n  for (const y of ys) {\n    let x;\n    x = y;\n    console.log(x);\n  }\n}`,
+    },
+    {
+      title: "読み取り専用の var はループ内へ移動できる",
+      code: `function f(ys) {\n  var x = 1;\n  for (const y of ys) {\n    console.log(x);\n  }\n}`,
+      output: `function f(ys) {\n  for (const y of ys) {\n    var x = 1;\n    console.log(x);\n  }\n}`,
+    },
+    {
+      title: "最初が書き込みの let はループ内へ移動できる",
+      code: `function f() {\n  let x = 0;\n  for (let i = 0; i < 3; i++) {\n    x = i * 2;\n    console.log(x);\n  }\n}`,
+      output: `function f() {\n  for (let i = 0; i < 3; i++) {\n    let x = 0;\n    x = i * 2;\n    console.log(x);\n  }\n}`,
+    },
+    {
+      title: "最初が書き込みの var はループ内へ移動できる",
+      code: `function f() {\n  var x = 0;\n  for (let i = 0; i < 3; i++) {\n    x = i;\n    console.log(x);\n  }\n}`,
+      output: `function f() {\n  for (let i = 0; i < 3; i++) {\n    var x = 0;\n    x = i;\n    console.log(x);\n  }\n}`,
+    },
+    {
+      title: "ネストしたブロックの最初が書き込みなら移動できる",
+      code: `function f(c) {\n  let x = 0;\n  for (let i = 0; i < 3; i++) {\n    if (c) {\n      x = i;\n      console.log(x);\n    }\n  }\n}`,
+      output: `function f(c) {\n  for (let i = 0; i < 3; i++) {\n    if (c) {\n      let x = 0;\n      x = i;\n      console.log(x);\n    }\n  }\n}`,
+    },
+    {
+      title: "読み取り専用の const はクロージャがあってもループ内へ移動できる",
+      code: `function f() {\n  const x = 1;\n  const fs = [];\n  for (let i = 0; i < 2; i++) {\n    fs.push(() => x);\n  }\n  return fs;\n}`,
+      output: `function f() {\n  const fs = [];\n  for (let i = 0; i < 2; i++) {\n    const x = 1;\n    fs.push(() => x);\n  }\n  return fs;\n}`,
+    },
+    {
+      title: "複数の宣言子をループ内で個別に判定",
+      code: `function f() {\n  let a = 0, b = 1;\n  for (let i = 0; i < 2; i++) {\n    a = i;\n    console.log(a, b);\n  }\n}`,
+      output: `function f() {\n  for (let i = 0; i < 2; i++) {\n    let a = 0,\n      b = 1;\n    a = i;\n    console.log(a, b);\n  }\n}`,
+    },
+    {
+      title: "符号付きリテラルはループ内へ移動できる",
+      code: `function f(ys) {\n  let x = -1;\n  for (const y of ys) {\n    console.log(x + y);\n  }\n}`,
+      output: `function f(ys) {\n  for (const y of ys) {\n    let x = -1;\n    console.log(x + y);\n  }\n}`,
+    },
+    {
       title: "初期化子なし let を裸のブロックへ移動",
       code: `function f() {\n  let x;\n  {\n    x = 1;\n    console.log(x);\n  }\n}`,
       output: `function f() {\n  {\n    let x;\n    x = 1;\n    console.log(x);\n  }\n}`,
@@ -110,16 +155,36 @@ pluginTester({
       `function f() {\n  let x = this.value;\n  if (c) {\n    console.log(x);\n  }\n}`,
     ),
     unchanged(
-      "let をループ内へは移動しない",
-      `function f(ys) {\n  let x = 1;\n  for (const y of ys) {\n    console.log(x);\n  }\n}`,
+      "書き込みより先に読み取る let はループ内へ移動しない",
+      `function f() {\n  let x = 0;\n  for (let i = 0; i < 3; i++) {\n    console.log(x);\n    x = i;\n  }\n}`,
     ),
     unchanged(
-      "初期化子なし let をループ内へは移動しない",
-      `function f(ys) {\n  let x;\n  for (const y of ys) {\n    x = y;\n    console.log(x);\n  }\n}`,
+      "条件付きの書き込みはループ内への移動に使わない",
+      `function f(c) {\n  let x = 0;\n  for (let i = 0; i < 3; i++) {\n    if (c) {\n      x = i;\n    }\n    console.log(x);\n  }\n}`,
     ),
     unchanged(
-      "初期化子付き var をループ内へは移動しない",
-      `function f(ys) {\n  var x = 1;\n  for (const y of ys) {\n    console.log(x);\n  }\n}`,
+      "最初の参照が更新式",
+      `function f() {\n  let x = 0;\n  for (let i = 0; i < 3; i++) {\n    x++;\n    console.log(x);\n  }\n}`,
+    ),
+    unchanged(
+      "最初の参照が複合代入",
+      `function f() {\n  let x = 0;\n  for (let i = 0; i < 3; i++) {\n    x += i;\n    console.log(x);\n  }\n}`,
+    ),
+    unchanged(
+      "書き込みをクロージャから参照する let はループ内へ移動しない",
+      `function f() {\n  let x = 0;\n  const fs = [];\n  for (let i = 0; i < 2; i++) {\n    x = i;\n    fs.push(() => x);\n  }\n  return fs;\n}`,
+    ),
+    unchanged(
+      "hoist された関数から参照する let はループ内へ移動しない",
+      `function f() {\n  let x = 0;\n  for (let i = 0; i < 2; i++) {\n    useX();\n    x = i;\n    function useX() {\n      console.log(x);\n    }\n  }\n}`,
+    ),
+    unchanged(
+      "for の update で参照する変数はループ内へ移動しない",
+      `function f() {\n  let x = 0;\n  for (let i = 0; i < 3; x = i, i++) {\n    x = 1;\n    console.log(x);\n  }\n}`,
+    ),
+    unchanged(
+      "配列の初期化子はループ内へ移動しない",
+      `function f() {\n  let x = [];\n  for (let i = 0; i < 2; i++) {\n    x = [i];\n    console.log(x);\n  }\n}`,
     ),
     unchanged(
       "ネストした関数の本体へは移動しない",

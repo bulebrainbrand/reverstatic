@@ -24,5 +24,23 @@ expectSameBehavior({
       log: [[1], [2]],
       output: `function f() {\n  let b = 2;\n  if (true) {\n    let a = 1;\n    console.log(a);\n  }\n  console.log(b);\n}\nf();`,
     },
+    {
+      title: "ループ内で最初に書き込む let は同じ挙動",
+      input: `function f() {\n  let x = 0;\n  for (let i = 0; i < 3; i++) {\n    x = i * 2;\n    console.log(x);\n  }\n}\nf();`,
+      log: [[0], [2], [4]],
+      output: `function f() {\n  for (let i = 0; i < 3; i++) {\n    let x = 0;\n    x = i * 2;\n    console.log(x);\n  }\n}\nf();`,
+    },
+    {
+      title: "ループ内で最初に書き込む var は同じ挙動",
+      input: `function f() {\n  var x = 0;\n  for (let i = 0; i < 3; i++) {\n    x = i;\n    console.log(x);\n  }\n}\nf();`,
+      log: [[0], [1], [2]],
+      output: `function f() {\n  for (let i = 0; i < 3; i++) {\n    var x = 0;\n    x = i;\n    console.log(x);\n  }\n}\nf();`,
+    },
+    {
+      title: "読み取り専用の const はクロージャがあっても同じ挙動",
+      input: `function f() {\n  const x = 10;\n  const fs = [];\n  for (let i = 0; i < 2; i++) {\n    fs.push(() => x + i);\n  }\n  return [fs[0](), fs[1]()];\n}\nconsole.log(f());`,
+      log: [[[10, 11]]],
+      output: `function f() {\n  const fs = [];\n  for (let i = 0; i < 2; i++) {\n    const x = 10;\n    fs.push(() => x + i);\n  }\n  return [fs[0](), fs[1]()];\n}\nconsole.log(f());`,
+    },
   ],
 });

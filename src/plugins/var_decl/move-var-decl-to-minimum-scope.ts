@@ -1,6 +1,8 @@
 import { type NodePath, type PluginObject, type PluginPass } from "@babel/core";
 import type { Binding } from "@babel/traverse";
 import * as t from "@babel/types";
+import { Result } from "@praha/byethrow";
+import { getConstantExpression } from "../../utils/getConstantExpression";
 import { getEffects } from "../../utils/getEffects";
 import { hasDynamicScope } from "../../utils/hasDynamicScope";
 import { isWithin } from "../../utils/isWithin";
@@ -21,8 +23,11 @@ import { isWithin } from "../../utils/isWithin";
 //
 // 初期化子は、移動しても評価結果が変わらないものだけを対象にする。
 // 具体的には、初期化子がないか、副作用・外部変数の読み取りがない式に限る。
-// また、ループ内への移動は反復ごとの再初期化を避けるため、初期化子なしの
-// var を除いて行わない。eval / with がある関数では名前解決が動的なので触らない。
+// ループ内への移動では、イテレーションごとの再初期化や束縛の作り直しが
+// 観測されない場合だけ許可する。書き込みがなければプリミティブ定数でよく、
+// 書き込みがある場合は移動先直下の無条件な単純代入が最初にあり、移動先に
+// クロージャを含まない場合に限る。初期化子なしの var は実行時効果がないため
+// 常に許可する。eval / with がある関数では名前解決が動的なので触らない。
 
 type DeclarationKind = "var" | "let" | "const";
 
@@ -139,6 +144,130 @@ const isInsideNewLoop = (target: NodePath, sourceList: NodePath): boolean => {
   return false;
 };
 
+/** use が target より内側の関数・クラス・静的ブロックに属するか。 */
+const isNestedClosureUse = (
+  use: NodePath,
+  target: NodePath<t.BlockStatement>,
+): boolean => {
+  for (
+    let current = use.parentPath;
+    current !== null && current.node !== target.node;
+    current = current.parentPath
+  ) {
+    if (current.isFunction() || current.isClass() || current.isStaticBlock()) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const hasNestedClosureUse = (
+  uses: NodePath[],
+  target: NodePath<t.BlockStatement>,
+): boolean => uses.some((use) => isNestedClosureUse(use, target));
+
+/**
+ * target 内の最初の使用箇所が、必ず実行される単純代入 x = ... か。
+ * if の中など、実行されない可能性がある書き込みは許可しない。
+ */
+const isFirstUseGuaranteedWrite = (
+  name: string,
+  uses: NodePath[],
+  target: NodePath<t.BlockStatement>,
+): boolean => {
+  let first: NodePath | undefined;
+  let firstStart = Number.POSITIVE_INFINITY;
+
+  for (const use of uses) {
+    const start = use.node.start;
+    if (typeof start !== "number") {
+      return false;
+    }
+    if (start < firstStart) {
+      first = use;
+      firstStart = start;
+    }
+  }
+  if (first === undefined) {
+    return false;
+  }
+  if (!first.isAssignmentExpression({ operator: "=" })) {
+    return false;
+  }
+
+  const left = first.get("left");
+  if (Array.isArray(left) || !left.isIdentifier({ name })) {
+    return false;
+  }
+
+  const statement = first.parentPath;
+  if (!statement?.isExpressionStatement()) {
+    return false;
+  }
+  if (statement.node.expression !== first.node) {
+    return false;
+  }
+  if (statement.parentPath?.node !== target.node) {
+    return false;
+  }
+
+  // 代入の左辺以外に、同じ代入の中で x を参照していないこと。
+  return !uses.some(
+    (use) =>
+      use.node !== first.node &&
+      use.node !== left.node &&
+      isWithin(use, first.node),
+  );
+};
+
+/** ループ内で再評価しても、値と例外タイミングが変わらない初期化子か。 */
+const isLoopSafeInit = (init: t.Expression | null | undefined): boolean =>
+  init == null || Result.isSuccess(getConstantExpression(init));
+
+/** 新しいループ内へ宣言を移してよいか。 */
+const canMoveIntoNewLoop = (
+  kind: DeclarationKind,
+  declarator: NodePath<t.VariableDeclarator>,
+  binding: Binding,
+  uses: NodePath[],
+  target: NodePath<t.BlockStatement>,
+): boolean => {
+  const init = declarator.node.init;
+
+  // 初期化なしの var は宣言自体に実行時効果がない。
+  if (kind === "var" && init === null) {
+    return true;
+  }
+
+  if (!isLoopSafeInit(init)) {
+    return false;
+  }
+
+  // 読み取り専用なら、毎回同じプリミティブ値になるので束縛が作り直されてもよい。
+  if (binding.constantViolations.length === 0) {
+    return true;
+  }
+
+  // 書き込みのある const は通常あり得ないコードなので触らない。
+  if (kind === "const") {
+    return false;
+  }
+
+  const name = declarator.node.id;
+  if (!t.isIdentifier(name)) {
+    return false;
+  }
+
+  // 前回の値が読まれないことを保証する。
+  if (!isFirstUseGuaranteedWrite(name.name, uses, target)) {
+    return false;
+  }
+
+  // let はイテレーションごとに束縛が変わる。var も関数宣言の hoisting で
+  // テキスト順と実行順がずれるため、移動先内のクロージャは避ける。
+  return !hasNestedClosureUse(uses, target);
+};
+
 /** 初期化子を移動先まで遅らせても評価結果が変わらないか。 */
 const canRelocateInit = (
   declarator: NodePath<t.VariableDeclarator>,
@@ -210,8 +339,10 @@ const findTarget = (
     return undefined;
   }
 
-  const uninitializedVar = kind === "var" && declarator.node.init === null;
-  if (!uninitializedVar && isInsideNewLoop(target, sourceList)) {
+  if (
+    isInsideNewLoop(target, sourceList) &&
+    !canMoveIntoNewLoop(kind, declarator, binding, uses, target)
+  ) {
     return undefined;
   }
 
