@@ -1,9 +1,9 @@
 import { pluginTester } from "babel-plugin-tester";
-import removeNoSideEffectStatement from "./remove-no-sideeffect-statement";
+import removeNoSideEffectStmt from "./remove-no-sideeffect-stmt";
 
 pluginTester({
-  plugin: removeNoSideEffectStatement,
-  pluginName: "remove-no-sideeffect-statement",
+  plugin: removeNoSideEffectStmt,
+  pluginName: "remove-no-sideeffect-stmt",
   tests: [
     { code: `1;`, output: `` },
     { code: `foo;`, output: `` },
